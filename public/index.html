@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mesh Prompt Interviewer</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Mesh Prompt Interviewer</h1>
+        <p>A local Ollama model interviews you, then writes a Meshy / Tripo3D / Rodin-style prompt and renders a preview.</p>
+      </header>
+
+      <section id="chat" aria-live="polite"></section>
+
+      <form id="composer">
+        <input id="composer-input" type="text" autocomplete="off" placeholder="Type your answer..." />
+        <button type="submit">Send</button>
+      </form>
+
+      <section id="result" hidden>
+        <h2>Final prompt</h2>
+        <pre id="result-prompt"></pre>
+        <p><strong>Negative prompt:</strong> <span id="result-negative"></span></p>
+        <p><strong>Style tags:</strong> <span id="result-tags"></span></p>
+        <button id="copy-prompt" type="button">Copy prompt</button>
+        <button id="render-button" type="button">Render preview image</button>
+
+        <div id="render-output" hidden>
+          <h3>Rendered preview</h3>
+          <img id="render-image" alt="Rendered concept preview of the generated mesh prompt" />
+          <p id="render-meta"></p>
+        </div>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>
