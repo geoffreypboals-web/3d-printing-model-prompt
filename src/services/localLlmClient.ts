@@ -5,6 +5,12 @@ const model = process.env.LOCAL_LLM_MODEL ?? "llama3.1";
 
 export class LocalLlmError extends Error {}
 
+const describeFailedResponse = async (response: Response): Promise<string> => {
+  const body = await response.text().catch(() => "");
+  const trimmed = body.trim().slice(0, 300);
+  return `local llm request failed (${response.status})${trimmed ? `: ${trimmed}` : ""}`;
+};
+
 /**
  * Extracts the first top-level JSON object from a model response, tolerating
  * stray text around it. Mirrors the defensive parsing already used in
@@ -32,7 +38,7 @@ export const chatWithLocalLlm = async (systemPrompt: string, history: ChatMessag
   });
 
   if (!response.ok) {
-    throw new LocalLlmError(`local llm request failed (${response.status})`);
+    throw new LocalLlmError(await describeFailedResponse(response));
   }
 
   const payload = (await response.json()) as { message?: { content?: string } };
@@ -51,7 +57,7 @@ export const generateWithLocalLlm = async (prompt: string): Promise<string> => {
   });
 
   if (!response.ok) {
-    throw new LocalLlmError(`local llm request failed (${response.status})`);
+    throw new LocalLlmError(await describeFailedResponse(response));
   }
 
   const payload = (await response.json()) as { response?: string };
