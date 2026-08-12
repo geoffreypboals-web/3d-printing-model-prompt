@@ -14,8 +14,9 @@
 - Docker and Docker Compose.
 - [Ollama](https://ollama.com) running locally with a chat-capable model pulled, e.g.:
   ```
-  ollama pull llama3.1
+  ollama pull llama3
   ```
+  (a stronger instruction-following model, e.g. `llama3.1`, is worth pulling later if you see malformed replies — see Configuration below)
 - Optional, for local image rendering: a Stable Diffusion WebUI (AUTOMATIC1111 or compatible) running locally with its API enabled (`--api` flag), or a Meshy/Tripo3D API key for real mesh renders instead.
 
 ## Run it
@@ -39,7 +40,7 @@ Generated images (and meshes, when using Meshy/Tripo3D) are saved to `./output/`
 |-----------------------|---------------------------------------|---------|
 | `PORT`                | `4100`                                | Port the app listens on. |
 | `LOCAL_LLM_BASE_URL`  | `http://host.docker.internal:11434`   | Ollama server base URL. |
-| `LOCAL_LLM_MODEL`     | `llama3.1`                            | Ollama model used for the interview and prompt synthesis. |
+| `LOCAL_LLM_MODEL`     | `llama3`                              | Ollama model used for the interview and prompt synthesis. |
 | `RENDER_PROVIDER`     | `local-sd`                            | `local-sd`, `meshy`, or `tripo`. |
 | `SD_BASE_URL`         | `http://host.docker.internal:7860`    | Stable Diffusion WebUI base URL (used when `RENDER_PROVIDER=local-sd`). |
 | `MESHY_API_KEY`       | *(empty)*                             | Required when `RENDER_PROVIDER=meshy`. |

@@ -1,7 +1,7 @@
 import type { ChatMessage } from "../types.js";
 
 const baseUrl = process.env.LOCAL_LLM_BASE_URL ?? "http://127.0.0.1:11434";
-const model = process.env.LOCAL_LLM_MODEL ?? "llama3.1";
+const model = process.env.LOCAL_LLM_MODEL ?? "llama3";
 
 export class LocalLlmError extends Error {}
 
