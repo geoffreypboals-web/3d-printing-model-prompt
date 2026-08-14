@@ -83,3 +83,28 @@ This project keeps two docs at its root:
 
 - **`README.md`** — overview of what the project is, setup/install steps, and how to use it.
 - **`TROUBLESHOOTING.md`** — a separate, living document of common issues and their fixes. Add to it whenever a non-obvious bug or configuration problem gets solved, so the same issue doesn't have to be re-debugged from scratch later.
+
+## 8. Security — secure by default
+
+- **No secrets in code, ever.** API keys, tokens, passwords, and connection strings go in environment variables or a secrets manager, never hardcoded or committed. `.env` files are `.gitignore`'d, with a checked-in `.env.example` showing required keys with placeholder values. If a secret is ever accidentally committed, treat it as compromised — rotate it, don't just delete the commit.
+- **Validate and sanitize all external input** (user input, API responses, file uploads, query params) at the boundary. Use parameterized queries/ORM methods to prevent SQL injection, and output-encode to prevent XSS. Never trust client-side validation alone.
+- **Least privilege by default** — DB users, API tokens, container users, and file permissions get only the access they need, not broad/admin scope for convenience.
+- **Never silently weaken security for convenience.** Disabling TLS verification, wildcard CORS, disabling auth checks, or hardcoding a test credential "just for now" must be flagged explicitly and confirmed — including in code meant to be temporary, since temporary code has a way of shipping.
+- **Keep dependencies patched.** Pin versions, and flag when a dependency has a known CVE rather than silently using it. Enable automated dependency scanning where the platform supports it (e.g. GitHub Dependabot).
+- **Docker specifically:** use minimal/official base images, avoid running the container process as root when avoidable, and never bake secrets into image layers.
+
+## 9. Performance — profile before optimizing, avoid known traps
+
+- Write clear, correct code first — don't prematurely optimize. But avoid well-known traps by default: N+1 database queries, O(n²) algorithms on data that can grow, loading entire files/result sets into memory when streaming or pagination is available.
+- Where performance actually matters (user-facing latency, large batch jobs), **measure before optimizing** — profile it, don't guess. If an optimization trades off readability, say why in a comment or commit message.
+- Use caching deliberately (in-memory, Redis, HTTP cache headers) for expensive or repeated work, but always document the invalidation strategy — a cache with unclear invalidation is a future bug, not a free win.
+- Any list/search/query endpoint gets pagination or limits by default — never an unbounded result set.
+- Prefer async/non-blocking I/O for network- or disk-bound work in languages where it's idiomatic (Node, Python `asyncio`, etc.), especially in code handling concurrent requests.
+
+## 10. Cost controls — default cheap, guard against runaway spend
+
+- Default to free/open-source/self-hosted options before reaching for a paid service (this reinforces rule 5's Ollama-first stance) — if a paid service really is the right call, say so and name the cost driver.
+- Any external call that costs money per invocation (LLM APIs, metered SaaS, serverless functions) gets basic guardrails: rate limiting, a request cap, and caching of repeated/identical requests so the same paid call isn't made twice.
+- No unbounded loops, uncapped retries, or polling patterns that could spike usage-based billing (compute, API calls, egress) if something misbehaves — always cap and back off.
+- For any cloud infrastructure, set budget alerts and resource limits (autoscaling ceilings, timeouts) rather than leaving them unbounded by default.
+- Flag any design choice with a recurring cost implication (managed DB vs. self-hosted, per-invocation serverless pricing vs. a fixed-cost VM) before committing to it, so it's a deliberate call, not a default.
