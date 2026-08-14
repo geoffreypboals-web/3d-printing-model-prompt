@@ -108,3 +108,54 @@ This project keeps two docs at its root:
 - No unbounded loops, uncapped retries, or polling patterns that could spike usage-based billing (compute, API calls, egress) if something misbehaves — always cap and back off.
 - For any cloud infrastructure, set budget alerts and resource limits (autoscaling ceilings, timeouts) rather than leaving them unbounded by default.
 - Flag any design choice with a recurring cost implication (managed DB vs. self-hosted, per-invocation serverless pricing vs. a fixed-cost VM) before committing to it, so it's a deliberate call, not a default.
+
+## 11. Testing — cover the golden path and edge cases
+
+- New logic doesn't ship without at least a basic test: the golden/happy path plus one meaningful edge case (empty input, error condition, boundary value).
+- Prefer fast, deterministic unit tests close to the code under test; use integration tests for cross-component behavior (e.g. DB, API calls) rather than trying to unit-test everything.
+- When fixing a bug, add a test that reproduces it first, so it can't silently regress.
+- Don't chase 100% coverage as a goal in itself — prioritize tests around business logic, error handling, and anything that's bitten us before (see `TROUBLESHOOTING.md`).
+
+## 12. Version control & commit practices
+
+- Use a consistent commit message convention (Conventional Commits style: `feat:`, `fix:`, `docs:`, `chore:`, etc.) so history is scannable and could drive an automated changelog later.
+- Work happens on a branch, not directly on `main`/`master` — even solo, branch and review the diff before merging, so mistakes get caught before they're baked into history.
+- Keep commits scoped to one logical change; don't bundle unrelated fixes into one commit.
+- Branch names should describe the work (e.g. `feature/prompt-templates`, `fix/model-size-validation`), not be generic (`update`, `changes`).
+
+## 13. Error handling & logging
+
+- No silent failures — never swallow an exception or ignore an error return without at least logging it; if something is genuinely safe to ignore, say why in a comment.
+- Use structured, consistent logging (a real logging library, not scattered `print`/`console.log`) with severity levels (debug/info/warn/error), so logs can be filtered and searched.
+- Logs must never contain secrets, credentials, or personal data — ties directly to rule 8's security requirements.
+- Error messages surfaced to users should be actionable, not raw stack traces; the full detail belongs in the log, not the UI/API response.
+
+## 14. Linting & formatting
+
+- Every project gets an enforced formatter/linter appropriate to its language (e.g. `ruff`/`black` for Python, `eslint`/`prettier` for JS/TS, `gofmt` for Go), configured in the repo so it runs the same for anyone.
+- Formatting is automatic, not a matter of taste or debate — run the formatter rather than hand-formatting to match a style.
+- Lint failures should be fixed, not suppressed with a blanket disable — a targeted, commented suppression is fine when a rule genuinely doesn't apply.
+
+## 15. CI automation
+
+- This project gets a CI pipeline (GitHub Actions by default) that runs lint, tests, and a build check on every push/PR.
+- CI should fail loudly and specifically — a red check should make it obvious what broke, not just "build failed."
+- Keep CI fast enough to actually be used (cache dependencies, avoid unnecessary steps); a CI pipeline that takes 20 minutes for a small project stops being useful.
+
+## 16. Dependency & versioning hygiene
+
+- Lockfiles (`package-lock.json`, `poetry.lock`, `Pipfile.lock`, etc.) are committed, so builds are reproducible.
+- Follow semantic versioning (`MAJOR.MINOR.PATCH`) once the project has any real usage, and keep a `CHANGELOG.md` noting what changed at each version, especially breaking changes.
+- Update dependencies deliberately, not auto-merged without review — a dependency bump gets a quick look, particularly for anything with licensing (rule 6) or security (rule 8) implications.
+
+## 17. Data privacy
+
+- Don't collect personal or user data without a clear, stated reason tied to the project's function.
+- Because the goal is open source (rule 6), nothing sensitive — personal data, internal credentials, private user content — ever gets committed to this public repo, including in test fixtures, sample data, or logs checked into the repo.
+- If this project does handle personal data (e.g. accounts, contact info), document what's collected and why in the README, and default to storing the minimum necessary.
+
+## 18. Backups & data durability
+
+- If this project ever holds persistent state (a database, generated models, uploaded prompts/assets), it needs a documented backup/restore procedure — don't assume data loss can't happen.
+- Document the backup approach and how to restore from it in `TROUBLESHOOTING.md` or `README.md`, including where backups live and how often they run.
+- Before a schema migration or destructive data operation, confirm a backup/rollback path exists.
