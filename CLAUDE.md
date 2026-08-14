@@ -56,7 +56,16 @@ Adapt the comment syntax to the language (`//` or `/* */` for JS/TS/C-family, `#
 - `README.md` must include the Docker build/run instructions (full commands, e.g. `docker build -t <name> .` and `docker run ...` or `docker compose up`), using full absolute paths per rule 1 where relevant.
 - If something genuinely can't be containerized (e.g. it must run natively for OS-level access), say so explicitly and explain why, rather than silently skipping Docker.
 
-## 5. README + separate troubleshooting doc
+## 5. AI/LLM integration — plan for Ollama, minimize ongoing cost
+
+- The project owner has paid subscriptions to GitHub Copilot and Claude and is fine using them freely for initial development/stand-up of a project. But any AI/LLM capability the *program itself* calls at runtime (not just tools used to write the code) should be designed so it isn't permanently locked into a paid API.
+- **Ollama** (local, no-cost inference) should be treated as an available, no-cost backend option for this project if it needs LLM/AI functionality at runtime.
+- Put any LLM calls behind a small abstraction/interface (a single client wrapper, config-driven provider selection, etc.) so the backend can be swapped — e.g. via an env var or config value — between a paid API (Claude, OpenAI, etc.) and a local Ollama model, without rewriting call sites.
+- Default expectation: it's fine to prototype and initially stand up against a paid model for speed/quality, but plan and document a path to switch the default runtime backend to Ollama (or another free/local option) once stood up, to minimize ongoing operating cost.
+- If a task genuinely requires a paid model's quality/capability and Ollama can't reasonably substitute, say so explicitly rather than silently defaulting to the paid option.
+- Document in `README.md` which backend is the default, which are supported, and how to switch between them (model name/env var, Ollama setup requirement, etc.).
+
+## 6. README + separate troubleshooting doc
 
 This project keeps two docs at its root:
 
