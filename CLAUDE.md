@@ -65,7 +65,19 @@ Adapt the comment syntax to the language (`//` or `/* */` for JS/TS/C-family, `#
 - If a task genuinely requires a paid model's quality/capability and Ollama can't reasonably substitute, say so explicitly rather than silently defaulting to the paid option.
 - Document in `README.md` which backend is the default, which are supported, and how to switch between them (model name/env var, Ollama setup requirement, etc.).
 
-## 6. README + separate troubleshooting doc
+## 6. Open source is the goal — flag any paid/proprietary licensing
+
+- The default intent for this project is **open source**, not a private/commercial sale. Don't design around a paywall, license-key, or proprietary-distribution model unless explicitly told otherwise.
+- When choosing a library, framework, SDK, API, or other integration, prefer open-source / permissively-licensed options (MIT, Apache-2.0, BSD, etc.) suitable for open-source redistribution.
+- **Always explicitly warn the project owner** before integrating anything that:
+  - requires purchasing a commercial license or a paid tier to use in the way the project needs it,
+  - is "source available" but not OSI-approved / not freely redistributable,
+  - carries a copyleft license (e.g. GPL/AGPL) that could impose obligations on the rest of the project, or restrict how it can be distributed, or
+  - is free for personal/non-commercial use only, which could be a problem if the project is later distributed publicly.
+- Don't silently add a dependency with one of the above license issues — surface it and let the project owner decide before integrating it.
+- Where relevant, note dependency licenses in `README.md` (or a `NOTICE`/`LICENSES` file) so the project's licensing posture stays visible.
+
+## 7. README + separate troubleshooting doc
 
 This project keeps two docs at its root:
 
