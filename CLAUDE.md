@@ -159,3 +159,42 @@ This project keeps two docs at its root:
 - If this project ever holds persistent state (a database, generated models, uploaded prompts/assets), it needs a documented backup/restore procedure — don't assume data loss can't happen.
 - Document the backup approach and how to restore from it in `TROUBLESHOOTING.md` or `README.md`, including where backups live and how often they run.
 - Before a schema migration or destructive data operation, confirm a backup/rollback path exists.
+
+## 19. LICENSE + CONTRIBUTING.md
+
+- This project gets an actual `LICENSE` file at its root — without one, a public repo isn't really open source, regardless of intent (rule 6). MIT is the default choice unless there's a specific reason to use something else; flag it and confirm before picking anything other than MIT.
+- Once the project is public/stable enough for outside contributions, add a `CONTRIBUTING.md` covering how to set up the dev environment, run tests, and submit changes.
+- If it isn't ready to be public yet, note that in the README rather than leaving licensing ambiguous.
+
+## 20. Naming conventions
+
+- Use the naming convention idiomatic to the language (camelCase for JS/TS variables and functions, snake_case for Python, PascalCase for classes/types) — consistently, not mixed within the project.
+- Use the same term for the same concept everywhere (don't call the same entity "job" in one file and "task" in another) — pick one term early and stick to it in code, docs, and comments.
+- File and directory names should be descriptive and consistent in casing (e.g. all kebab-case or all snake_case for filenames, matching language convention).
+
+## 21. Observability & health checks
+
+- Any long-running or service-style component (a server, a background worker, anything running in Docker continuously) exposes a basic health/status check (e.g. a `/health` endpoint or equivalent).
+- Errors that matter (a failed generation, a lost connection, a crashed worker) should surface somewhere visible — not just written to a log file nobody's watching. At minimum, log clearly at `error` level; where relevant, surface status in the app itself rather than requiring a log grep to find out something's broken.
+- Don't over-build this — a simple health check and clear error logging is enough; full metrics/alerting infrastructure is only worth it once the project has real uptime requirements.
+
+## 22. Config & environment parity
+
+- All environment-specific values (dev/staging/prod: DB URLs, API endpoints, feature toggles) come from environment variables or config files, never hardcoded.
+- Keep a single, documented config schema (e.g. one `config.py`/`config.ts` module or a documented set of env vars in `.env.example`) rather than scattering `if env == "prod"` branches through the codebase.
+- Keep dev and prod as close as reasonably possible (same Docker image, different config) so "works on my machine" bugs don't show up only in production — this reinforces rule 4's Docker/cross-platform goal.
+
+## 23. Self-review checklist before merge
+
+Before merging any branch into `main` (per rule 12), confirm:
+- Tests pass locally (and in CI, per rule 15)
+- Docs (`README.md`, `TROUBLESHOOTING.md`, header blocks, inline docs) are updated if behavior changed
+- No secrets, credentials, or personal data slipped into the diff
+- The diff is scoped to what the commit/PR claims to do — no unrelated changes riding along
+- Linter/formatter has been run (rule 14)
+
+## 24. Architecture decision records (ADRs)
+
+- For any significant design decision (choice of database, framework, architecture pattern, a tradeoff that wasn't obvious), write a short dated note explaining what was decided and why.
+- Keep these in `docs/adr/` as numbered files (e.g. `0001-why-sqlite.md`), a few paragraphs each — not a full design doc, just enough that a future reader understands the reasoning without re-deriving it.
+- Only write one when the decision was genuinely non-obvious or could reasonably be second-guessed later — routine choices don't need one.
