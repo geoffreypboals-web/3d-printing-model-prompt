@@ -1,0 +1,12 @@
+services:
+  mesh-prompt-app:
+    build: .
+    ports:
+      - "4100:4100"
+    env_file:
+      - .env
+    volumes:
+      - ./output:/app/output
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

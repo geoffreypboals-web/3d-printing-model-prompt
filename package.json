@@ -1,0 +1,22 @@
+{
+  "name": "mesh-prompt-interviewer",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local Ollama-driven interview tool that turns a conversation into a Meshy/Tripo3D/Rodin-style text-to-3D prompt, with a rendered preview image.",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.9",
+    "tsx": "^4.16.2",
+    "typescript": "^5.5.3"
+  }
+}
