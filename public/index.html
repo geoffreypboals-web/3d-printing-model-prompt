@@ -33,6 +33,43 @@
           <img id="render-image" alt="Rendered concept preview of the generated mesh prompt" />
           <p id="render-meta"></p>
         </div>
+
+        <div id="thickness-panel" hidden>
+          <h3>Wall thickness</h3>
+          <p class="hint">
+            Only available for a real generated mesh (Meshy/Tripo3D), not the 2D local-SD preview.
+            Values assume 1 model unit &asymp; 1mm &mdash; text-to-3D generators don't guarantee real-world scale,
+            so treat this as an estimate, not a precise measurement.
+          </p>
+
+          <button id="analyze-thickness-button" type="button">Analyze current thickness</button>
+          <p id="thickness-analysis-result"></p>
+
+          <label>
+            Desired minimum thickness (mm)
+            <input id="thickness-input" type="number" min="0.01" step="0.01" value="1" />
+          </label>
+
+          <fieldset>
+            <legend>Which dimension should stay fixed?</legend>
+            <label>
+              <input type="radio" name="thickness-preserve" value="inside" checked />
+              Preserve inside dimensions (adds material outward, away from center)
+            </label>
+            <label>
+              <input type="radio" name="thickness-preserve" value="outside" />
+              Preserve outside dimensions (adds material inward, center void shrinks)
+            </label>
+          </fieldset>
+
+          <button id="apply-thickness-button" type="button">Regenerate with new thickness</button>
+          <p id="thickness-apply-status"></p>
+
+          <div id="thickness-result" hidden>
+            <img id="thickness-image" alt="Rendered preview of the mesh after applying the new wall thickness" />
+            <p id="thickness-mesh-path"></p>
+          </div>
+        </div>
       </section>
     </main>
     <script src="/app.js"></script>

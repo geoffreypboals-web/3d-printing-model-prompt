@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { interviewRouter } from "./routes/interview.js";
+import { meshRouter } from "./routes/mesh.js";
 import { renderRouter } from "./routes/render.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -19,6 +20,7 @@ app.get("/health", (_req, res) => {
 
 app.use("/api/interview", interviewRouter);
 app.use("/api/render", renderRouter);
+app.use("/api/mesh", meshRouter);
 app.use("/output", express.static(outputDir));
 app.use(express.static(publicDir));
 

@@ -25,3 +25,20 @@ export type RenderResult = {
   imageUrl: string;
   meshPath?: string;
 };
+
+export type ThicknessPreserve = "inside" | "outside";
+
+export type ThicknessAnalysisResult = {
+  estimatedMinThicknessMm: number;
+};
+
+export type ThicknessApplyRequest = {
+  meshPath: string;
+  thicknessMm: number;
+  preserve: ThicknessPreserve;
+};
+
+export type ThicknessApplyResult = {
+  meshPath: string;
+  imageUrl: string;
+};
