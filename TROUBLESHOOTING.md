@@ -4,6 +4,20 @@ Living log of non-obvious issues and their fixes for
 `/home/user/3d-printing-model-prompt`. Add to this whenever a real bug or
 config problem gets solved, so it doesn't get re-debugged from scratch.
 
+## `POST /thicken` in Swagger UI doesn't seem to give me the modified file back
+
+Fixed - in an earlier version `POST /thicken` returned JSON
+(`{model_id, method, download_url}`) requiring a second manual call to
+`GET /models/{model_id}/download` to actually get the file, which wasn't
+obvious from the Swagger UI form. It now returns the thickened STL
+directly as the response body (one round trip), with the new model_id and
+method as `X-Model-Id` / `X-Thicken-Method` response headers if you need
+them. In Swagger UI, "Execute" now gives a "Download file" link with the
+result. Note this only applies to `POST /thicken` (arbitrary upload) -
+`POST /models/{model_id}/thicken` (thickening a model this service already
+generated) still returns JSON with a `download_url`, since that endpoint
+is meant to chain with other calls that already deal in model_ids.
+
 ## `GET /health` reports `openscad_available: false` or `blender_available: false`
 
 The binaries aren't on `PATH` inside the environment running the service.

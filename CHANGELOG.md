@@ -6,6 +6,15 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ## [Unreleased]
 
+### Changed
+
+- `POST /thicken` (arbitrary file upload) now returns the thickened STL
+  file directly instead of JSON, so uploading and getting the modified
+  file back is one round trip - usable directly from Swagger UI's
+  "Execute" -> "Download file". The new model_id and method are now
+  carried as `X-Model-Id` / `X-Thicken-Method` response headers instead of
+  JSON fields. `POST /models/{model_id}/thicken` is unchanged (still JSON).
+
 ### Added
 
 - Initial service: `POST /generate` classifies a prompt (hybrid

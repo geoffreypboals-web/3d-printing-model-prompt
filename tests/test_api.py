@@ -228,7 +228,9 @@ def test_thicken_upload_golden_path(monkeypatch, client):
         data={"amount_mm": "2.0"},
     )
     assert resp.status_code == 200
-    assert resp.json()["method"] == "mesh_shell"
+    assert resp.content == b"solid shelled\nendsolid shelled\n"
+    assert resp.headers["x-thicken-method"] == "mesh_shell"
+    assert resp.headers["x-model-id"]  # non-empty
 
 
 def test_thicken_upload_rejects_unsupported_extension(client):

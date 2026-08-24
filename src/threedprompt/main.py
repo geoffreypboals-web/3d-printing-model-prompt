@@ -211,9 +211,16 @@ _UPLOAD_FILE = File(...)
 _AMOUNT_MM_FORM = Form(...)
 
 
-@app.post("/thicken", response_model=ThickenResponse)
-async def thicken_uploaded_file(file: UploadFile = _UPLOAD_FILE, amount_mm: float = _AMOUNT_MM_FORM) -> ThickenResponse:
-    """Increase the wall thickness of an arbitrary uploaded STL/OBJ file via mesh shelling."""
+@app.post("/thicken")
+async def thicken_uploaded_file(file: UploadFile = _UPLOAD_FILE, amount_mm: float = _AMOUNT_MM_FORM) -> FileResponse:
+    """
+    Increase the wall thickness of an arbitrary uploaded STL/OBJ file via
+    mesh shelling, and return the thickened STL directly (one round trip:
+    upload -> modify -> get the file back). The new model_id and method
+    are also exposed as response headers (X-Model-Id, X-Thicken-Method) if
+    you need them for further calls, e.g. GET /models/{model_id}/download
+    to re-fetch the same result later.
+    """
     if amount_mm <= 0:
         raise HTTPException(status_code=422, detail="amount_mm must be greater than 0")
     if amount_mm > settings.max_wall_thickness_mm:
@@ -232,10 +239,13 @@ async def thicken_uploaded_file(file: UploadFile = _UPLOAD_FILE, amount_mm: floa
     upload_model_id, upload_path = storage.save_upload(file.filename or "model.stl", content)
     try:
         new_model_id, new_dir = storage.new_model_dir()
-        thickness.mesh_shell(upload_path, amount_mm, new_dir)
+        result_path = thickness.mesh_shell(upload_path, amount_mm, new_dir)
         storage.save_spec(new_model_id, {"parent_model_id": upload_model_id, "method": "mesh_shell"})
-        return ThickenResponse(
-            model_id=new_model_id, method="mesh_shell", download_url=f"/models/{new_model_id}/download"
+        return FileResponse(
+            result_path,
+            media_type="model/stl",
+            filename=f"{new_model_id}.stl",
+            headers={"X-Model-Id": new_model_id, "X-Thicken-Method": "mesh_shell"},
         )
     except ThicknessError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
