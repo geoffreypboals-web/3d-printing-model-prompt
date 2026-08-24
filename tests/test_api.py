@@ -65,6 +65,22 @@ def _fake_blender_generate(prompt, output_dir, llm_client=None):
     )
 
 
+def test_root_serves_browser_ui(client):
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "<title>3D Printing Model Prompt</title>" in resp.text
+
+
+def test_static_mount_does_not_shadow_api_routes(client):
+    # The StaticFiles catch-all is mounted at "/" last - confirm a real API
+    # route still resolves correctly rather than falling through to a 404
+    # from the static file handler.
+    resp = client.get("/models/does-not-exist/download")
+    assert resp.status_code == 404
+    assert "text/html" not in resp.headers["content-type"]
+
+
 def test_health_reports_dependency_status(monkeypatch, client):
     monkeypatch.setattr(main.shutil, "which", lambda name: "/usr/bin/x")
     monkeypatch.setattr(main, "get_llm_client", lambda: type("C", (), {"is_reachable": lambda self: True})())

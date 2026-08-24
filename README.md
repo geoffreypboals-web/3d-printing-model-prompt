@@ -8,6 +8,12 @@ shapes (creatures, figurines, freeform sculptures) are built with
 **[Blender](https://www.blender.org/)** running headless. An HTTP API in
 front of both backends decides which one to use per request.
 
+**Browser UI**: once the service is running, open `http://localhost:8000/`
+in a browser for a simple page to generate a model from a prompt, or pick a
+local STL/OBJ file, increase its wall thickness, and download the result -
+no curl or API client needed. The full HTTP API (below) is also available
+for scripting/automation, with interactive docs at `/docs`.
+
 ## How routing works
 
 1. A cheap, deterministic keyword heuristic looks at the prompt first

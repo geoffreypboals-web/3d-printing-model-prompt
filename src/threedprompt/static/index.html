@@ -1,0 +1,241 @@
+<!--
+Project: 3D Printing Model Prompt
+File: /home/user/3d-printing-model-prompt/src/threedprompt/static/index.html
+Description: Minimal browser UI for the service, served at "/" by main.py
+    (see the StaticFiles mount at the bottom of that file). Two forms:
+    generate a model from a text prompt, and increase the wall thickness
+    of a local file via a real file picker - both trigger a browser
+    download of the resulting STL. No build step, no external scripts/
+    CDNs (Docker-first, works fully offline once the container is up).
+Inputs: User interaction (prompt text, file picker, amount_mm); calls the
+    same-origin JSON API in main.py (POST /generate, POST /thicken,
+    GET /models/{id}/download).
+Outputs: Triggers a browser file download of the resulting STL.
+Troubleshooting:
+    - Blank page / 404: confirm the StaticFiles mount in main.py points
+      at this file's directory and is registered AFTER all API routes
+      (a mount at "/" declared first would shadow them).
+    - "Generate"/"Thicken" button does nothing visible: open the browser
+      console - fetch() errors (network, CORS) log there; API validation
+      errors (422/503/etc.) are shown inline via showStatus().
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D Printing Model Prompt</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --fg: #1a1a1a;
+    --bg: #ffffff;
+    --muted: #666666;
+    --border: #d0d0d0;
+    --accent: #2f6fed;
+    --error: #b3261e;
+    --ok: #1e7a34;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #e8e8e8;
+      --bg: #16181c;
+      --muted: #9a9a9a;
+      --border: #3a3d42;
+      --accent: #6ea2ff;
+      --error: #ff6b62;
+      --ok: #4fd67a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1rem 4rem;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+  }
+  main { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+  p.subtitle { color: var(--muted); margin-top: 0; margin-bottom: 2rem; }
+  section {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+  section h2 { font-size: 1.05rem; margin-top: 0; }
+  label { display: block; font-weight: 600; margin-top: 0.75rem; margin-bottom: 0.25rem; }
+  input[type=text], input[type=number], input[type=file], textarea {
+    width: 100%;
+    padding: 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--fg);
+    font: inherit;
+  }
+  textarea { min-height: 4.5rem; resize: vertical; }
+  button {
+    margin-top: 1rem;
+    padding: 0.55rem 1.1rem;
+    border: none;
+    border-radius: 6px;
+    background: var(--accent);
+    color: #fff;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.6; cursor: default; }
+  .status { margin-top: 0.75rem; font-size: 0.92rem; white-space: pre-wrap; }
+  .status.error { color: var(--error); }
+  .status.ok { color: var(--ok); }
+  .hint { color: var(--muted); font-size: 0.85rem; margin-top: 0.25rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>3D Printing Model Prompt</h1>
+  <p class="subtitle">Generate a model from a description, or increase the wall thickness of a file you already have.</p>
+
+  <section>
+    <h2>Generate from a prompt</h2>
+    <label for="prompt">Description</label>
+    <textarea id="prompt" placeholder="a mounting bracket for a raspberry pi, 60mm"></textarea>
+    <label for="gen-thickness">Wall thickness (mm, optional)</label>
+    <input id="gen-thickness" type="number" min="0" step="0.1" placeholder="3.0">
+    <button id="gen-btn" type="button">Generate &amp; download</button>
+    <div id="gen-status" class="status" role="status"></div>
+  </section>
+
+  <section>
+    <h2>Increase wall thickness of a file</h2>
+    <label for="file-input">STL or OBJ file</label>
+    <input id="file-input" type="file" accept=".stl,.obj">
+    <label for="thicken-amount">Amount to add (mm)</label>
+    <input id="thicken-amount" type="number" min="0" step="0.1" value="1.5">
+    <button id="thicken-btn" type="button">Thicken &amp; download</button>
+    <div class="hint">Loads the file you pick, shells it by the given amount via a Blender Solidify modifier, and downloads the result - nothing is uploaded anywhere except this server.</div>
+    <div id="thicken-status" class="status" role="status"></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+// Shows a status message under a form; kind is "info" | "ok" | "error".
+function showStatus(el, message, kind) {
+  el.textContent = message;
+  el.className = "status" + (kind ? " " + kind : "");
+}
+
+// Extracts a filename from a Content-Disposition header, falling back to fallbackName.
+function filenameFromDisposition(header, fallbackName) {
+  if (!header) return fallbackName;
+  const match = /filename="?([^";]+)"?/i.exec(header);
+  return match ? match[1] : fallbackName;
+}
+
+// Triggers a browser download of `blob` named `filename` without navigating away.
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+// Reads a JSON error body's "detail" field for display, tolerating a non-JSON body.
+async function errorDetail(response) {
+  try {
+    const data = await response.json();
+    return data.detail || response.statusText;
+  } catch {
+    return response.statusText;
+  }
+}
+
+async function handleGenerate() {
+  const prompt = document.getElementById("prompt").value.trim();
+  const thicknessRaw = document.getElementById("gen-thickness").value;
+  const statusEl = document.getElementById("gen-status");
+  const button = document.getElementById("gen-btn");
+
+  if (!prompt) {
+    showStatus(statusEl, "Enter a description first.", "error");
+    return;
+  }
+
+  const body = { prompt };
+  if (thicknessRaw) body.wall_thickness_mm = parseFloat(thicknessRaw);
+
+  button.disabled = true;
+  showStatus(statusEl, "Classifying and generating - this can take a while for complex shapes...", "info");
+  try {
+    const genResp = await fetch("/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!genResp.ok) throw new Error(await errorDetail(genResp));
+    const result = await genResp.json();
+
+    showStatus(statusEl, `Routed to ${result.backend} (${result.classification_method}). Downloading...`, "info");
+    const fileResp = await fetch(result.download_url);
+    if (!fileResp.ok) throw new Error(await errorDetail(fileResp));
+    const blob = await fileResp.blob();
+    downloadBlob(blob, `${result.model_id}.stl`);
+    showStatus(statusEl, `Done - generated via ${result.backend} (${result.classification_reasoning})`, "ok");
+  } catch (err) {
+    showStatus(statusEl, "Failed: " + err.message, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function handleThicken() {
+  const fileInput = document.getElementById("file-input");
+  const amount = document.getElementById("thicken-amount").value;
+  const statusEl = document.getElementById("thicken-status");
+  const button = document.getElementById("thicken-btn");
+
+  if (!fileInput.files.length) {
+    showStatus(statusEl, "Pick a file first.", "error");
+    return;
+  }
+  if (!amount || parseFloat(amount) <= 0) {
+    showStatus(statusEl, "Enter an amount greater than 0.", "error");
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("file", fileInput.files[0]);
+  formData.append("amount_mm", amount);
+
+  button.disabled = true;
+  showStatus(statusEl, "Uploading and shelling the mesh...", "info");
+  try {
+    const resp = await fetch("/thicken", { method: "POST", body: formData });
+    if (!resp.ok) throw new Error(await errorDetail(resp));
+    const blob = await resp.blob();
+    const modelId = resp.headers.get("X-Model-Id") || "thickened";
+    const filename = filenameFromDisposition(resp.headers.get("Content-Disposition"), `${modelId}.stl`);
+    downloadBlob(blob, filename);
+    showStatus(statusEl, "Done - thickened file downloaded.", "ok");
+  } catch (err) {
+    showStatus(statusEl, "Failed: " + err.message, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+document.getElementById("gen-btn").addEventListener("click", handleGenerate);
+document.getElementById("thicken-btn").addEventListener("click", handleThicken);
+</script>
+</body>
+</html>

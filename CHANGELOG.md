@@ -17,6 +17,10 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ### Added
 
+- Minimal browser UI served at `/` (`src/threedprompt/static/index.html`) -
+  generate a model from a prompt, or pick a local STL/OBJ file, increase
+  its wall thickness, and download the result, all from a real file picker
+  without needing curl or the Swagger docs.
 - Initial service: `POST /generate` classifies a prompt (hybrid
   heuristic/LLM router) and generates a model via OpenSCAD (simple/
   parametric parts) or headless Blender (complex/organic shapes).

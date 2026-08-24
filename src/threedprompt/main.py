@@ -5,7 +5,9 @@ Description: FastAPI application wiring together the classifier, the two
     generation backends (OpenSCAD for simple parts, Blender for complex
     ones), and the wall-thickness endpoints. This is the only HTTP-facing
     module - it does no CAD/LLM work itself, only routing, validation,
-    and translating domain errors into HTTP responses.
+    and translating domain errors into HTTP responses. Also serves the
+    browser UI (static/index.html) at "/" for picking a local file,
+    modifying it, and downloading the result without needing curl/Swagger.
 Inputs: HTTP requests (see models.py for request/response schemas).
 Outputs: HTTP responses; STL files written under settings.output_dir as
     a side effect.
@@ -15,6 +17,9 @@ Troubleshooting:
       it reports each dependency's status individually.
     - 413 on /thicken means the uploaded file exceeded MAX_UPLOAD_BYTES;
       raise that env var if you intentionally need larger uploads.
+    - "/" 404s or shows raw JSON instead of the UI: the StaticFiles mount
+      must be the LAST route registered (it's a catch-all at "/") - if a
+      new API route is added below it by mistake, it'll never be reached.
     - Run locally with: uvicorn threedprompt.main:app --reload
       (see README.md at /home/user/3d-printing-model-prompt/README.md
       for the full command including PYTHONPATH setup).
@@ -27,6 +32,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from threedprompt import blender_generator, openscad_generator, storage, thickness
 from threedprompt.blender_generator import BlenderGenerationError
@@ -249,3 +255,10 @@ async def thicken_uploaded_file(file: UploadFile = _UPLOAD_FILE, amount_mm: floa
         )
     except ThicknessError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+# Mounted last and at "/" so it only serves requests none of the API routes
+# above matched; StaticFiles(html=True) serves static/index.html at "/" -
+# the browser UI for picking a file to load/thicken/download (see that
+# file's header comment) or generating a model from a prompt.
+app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="static")
