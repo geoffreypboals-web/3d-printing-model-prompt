@@ -24,6 +24,33 @@ The binaries aren't on `PATH` inside the environment running the service.
   `docker compose exec ollama ollama pull llama3.1`.
 - `LLM_PROVIDER=claude`: `ANTHROPIC_API_KEY` is missing/invalid.
 
+## `docker compose up` fails with "port is already allocated" on `11434`
+
+Something on the host is already using Ollama's default port - almost
+always a native (non-Docker) Ollama install already running. Two options:
+
+1. **Use your native Ollama instead of the bundled container** (recommended
+   if you already have models pulled there): set
+   `OLLAMA_HOST=http://host.docker.internal:11434` in `.env`, then run
+   `docker compose up --build --no-deps app` - `--no-deps` is required, or
+   Compose starts the bundled `ollama` service anyway and you hit the same
+   conflict. On native Linux Docker (not Docker Desktop),
+   `host.docker.internal` needs the `extra_hosts: host-gateway` line already
+   present in `docker-compose.yml`'s `app` service - Docker Desktop
+   (Windows/Mac) resolves it automatically.
+2. Or free the port: `docker ps -a | grep ollama` to find a stray container
+   from a previous run and `docker stop <id>`, or stop the native Ollama
+   service on the host.
+
+**If you did set `OLLAMA_HOST` correctly but `/health` still reports
+`llm_reachable: false`**: this was a real bug in an earlier version of
+`docker-compose.yml` - it hardcoded `OLLAMA_HOST=http://ollama:11434` in
+the `app` service's `environment:` block, which silently overrode whatever
+was in `.env` (Compose's `environment:` always wins over `env_file:`).
+Fixed by removing that override so `.env` is the single source of truth
+(CLAUDE.md rule 22) - pull the latest `docker-compose.yml` if you still hit
+this.
+
 ## `POST /generate` returns 503 with an OpenSCAD compiler error
 
 The service already retries once, feeding the compiler error back to the LLM

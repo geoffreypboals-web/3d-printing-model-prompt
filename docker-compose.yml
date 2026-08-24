@@ -8,12 +8,23 @@
 # Outputs: app reachable on http://localhost:8000; generated models
 #     persisted in the `threedprompt_output` volume.
 # Troubleshooting:
-#     - First run: `docker compose exec ollama ollama pull llama3.1` to
-#       download the default model before generating anything - the image
-#       does not bundle model weights.
+#     - First run (bundled ollama service): `docker compose exec ollama
+#       ollama pull llama3.1` to download the default model before
+#       generating anything - the image does not bundle model weights.
+#     - OLLAMA_HOST is read entirely from .env (rule 22: env vars, not
+#       hardcoded branches) - this file does NOT override it, so pick one:
+#         * Using the bundled `ollama` service (default): set
+#           OLLAMA_HOST=http://ollama:11434 in .env, and run
+#           `docker compose up --build` (starts both services).
+#         * Using Ollama already running on your host machine: set
+#           OLLAMA_HOST=http://host.docker.internal:11434 in .env, and run
+#           `docker compose up --build --no-deps app` (skips the bundled
+#           service - on native Linux Docker, host.docker.internal needs
+#           the extra_hosts line below; Docker Desktop on Windows/Mac
+#           resolves it out of the box).
 #     - To use the Claude API instead of local Ollama, set
-#       LLM_PROVIDER=claude and ANTHROPIC_API_KEY in .env and you can
-#       remove/ignore the ollama service.
+#       LLM_PROVIDER=claude and ANTHROPIC_API_KEY in .env and use
+#       --no-deps as above to skip the unused ollama service.
 
 services:
   app:
@@ -22,8 +33,8 @@ services:
       - "8000:8000"
     env_file:
       - .env
-    environment:
-      OLLAMA_HOST: http://ollama:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # only needed on native Linux Docker; harmless elsewhere
     volumes:
       - threedprompt_output:/app/output
     depends_on:

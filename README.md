@@ -89,6 +89,7 @@ Docker itself.
 ```bash
 cd /home/user/3d-printing-model-prompt
 cp .env.example .env
+# in .env, set: OLLAMA_HOST=http://ollama:11434
 docker compose up --build
 # first run only, to pull the default local model:
 docker compose exec ollama ollama pull llama3.1
@@ -97,6 +98,22 @@ docker compose exec ollama ollama pull llama3.1
 The API is then available at `http://localhost:8000`. `docker-compose.yml`
 also starts a local Ollama container so the no-cost default LLM backend
 works with no extra setup.
+
+**Already have Ollama running on your machine** (e.g. installed natively,
+not in Docker)? Skip the bundled container instead of fighting a port
+conflict on `11434`:
+
+```bash
+cd /home/user/3d-printing-model-prompt
+cp .env.example .env
+# in .env, set: OLLAMA_HOST=http://host.docker.internal:11434
+docker compose up --build --no-deps app
+```
+
+`--no-deps` is required - without it, Compose starts the bundled `ollama`
+service anyway (as the `app` service's dependency) and you'll hit the same
+port conflict. `OLLAMA_HOST` is read entirely from `.env` (rule 22); nothing
+in `docker-compose.yml` overrides it.
 
 To build/run the app image alone (bring your own LLM backend):
 
