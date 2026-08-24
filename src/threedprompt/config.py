@@ -89,7 +89,7 @@ class Settings:
 
     # --- Request limits (rule 9/10: bounded input, no runaway spend) ---
     max_prompt_length: int = field(default_factory=lambda: _env_int("MAX_PROMPT_LENGTH", 2000))
-    max_upload_bytes: int = field(default_factory=lambda: _env_int("MAX_UPLOAD_BYTES", 50 * 1024 * 1024))
+    max_upload_bytes: int = field(default_factory=lambda: _env_int("MAX_UPLOAD_BYTES", 300 * 1024 * 1024))
     max_wall_thickness_mm: float = field(default_factory=lambda: _env_float("MAX_WALL_THICKNESS_MM", 20.0))
 
     # --- Server ---

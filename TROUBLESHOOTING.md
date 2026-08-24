@@ -4,6 +4,18 @@ Living log of non-obvious issues and their fixes for
 `/home/user/3d-printing-model-prompt`. Add to this whenever a real bug or
 config problem gets solved, so it doesn't get re-debugged from scratch.
 
+## `POST /thicken` (or the browser UI's "Thicken & download") fails with "upload exceeds MAX_UPLOAD_BYTES"
+
+The uploaded file is larger than the configured cap. The default was
+raised from 50MB to 300MB (dense/scanned STL meshes routinely exceed
+50MB), but any specific file can still be bigger than that. Set
+`MAX_UPLOAD_BYTES` in `.env` (in bytes) to whatever comfortably covers
+your files - e.g. `MAX_UPLOAD_BYTES=524288000` for 500MB - then restart:
+`docker compose up --build --no-deps app` (or `docker compose up --build`
+if using the bundled Ollama service). Note the whole upload is currently
+buffered in memory before being written to disk, so keep this within your
+container's available RAM rather than setting it arbitrarily high.
+
 ## `POST /thicken` in Swagger UI doesn't seem to give me the modified file back
 
 Fixed - in an earlier version `POST /thicken` returned JSON

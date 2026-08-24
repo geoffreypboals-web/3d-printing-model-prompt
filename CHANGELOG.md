@@ -8,6 +8,9 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ### Changed
 
+- Default `MAX_UPLOAD_BYTES` raised from 50MB to 300MB - dense/scanned
+  STL meshes routinely exceeded the old default. Still configurable via
+  `.env` for files larger than that.
 - `POST /thicken` (arbitrary file upload) now returns the thickened STL
   file directly instead of JSON, so uploading and getting the modified
   file back is one round trip - usable directly from Swagger UI's
