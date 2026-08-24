@@ -1,0 +1,25 @@
+[project]
+name = "threedprompt"
+version = "0.1.0"
+description = "Generates 3D-printable models from natural-language prompts, routing simple parametric parts to OpenSCAD and complex organic shapes to Blender."
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "MIT" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.black]
+line-length = 120
+target-version = ["py311"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

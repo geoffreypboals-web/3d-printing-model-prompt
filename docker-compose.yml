@@ -1,0 +1,41 @@
+# Project: 3D Printing Model Prompt
+# File: /home/user/3d-printing-model-prompt/docker-compose.yml
+# Description: Local/dev stack - the threedprompt app plus a local Ollama
+#     instance so the no-cost default LLM backend (rule 6) works out of
+#     the box with `docker compose up`, no separate Ollama install needed.
+# Inputs: .env (see .env.example at
+#     /home/user/3d-printing-model-prompt/.env.example)
+# Outputs: app reachable on http://localhost:8000; generated models
+#     persisted in the `threedprompt_output` volume.
+# Troubleshooting:
+#     - First run: `docker compose exec ollama ollama pull llama3.1` to
+#       download the default model before generating anything - the image
+#       does not bundle model weights.
+#     - To use the Claude API instead of local Ollama, set
+#       LLM_PROVIDER=claude and ANTHROPIC_API_KEY in .env and you can
+#       remove/ignore the ollama service.
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    volumes:
+      - threedprompt_output:/app/output
+    depends_on:
+      - ollama
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_models:/root/.ollama
+    ports:
+      - "11434:11434"
+
+volumes:
+  threedprompt_output:
+  ollama_models:

@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# threedprompt generated models (local dev output - not committed, see rule 17/18)
+/output/
+
