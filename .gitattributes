@@ -1,0 +1,11 @@
+# Normalizes line endings for scripts/config copied into the Docker image
+# (CLAUDE.md rule 4) -- a script checked out with CRLF on a Windows clone
+# would otherwise fail inside the Linux-based container with a cryptic
+# "no such file or directory" (the shebang line's \r isn't stripped).
+* text=auto eol=lf
+
+*.py text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf

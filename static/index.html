@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>3D Printing Model Prompt</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header>
+    <h1>3D Printing Model Prompt</h1>
+    <p>Describe what you want printed. The backend (Ollama by default -- see README.md) turns it
+       into a physically printable design description that fits your printer's build volume.</p>
+  </header>
+  <main>
+    <label for="text-input">Description</label>
+    <textarea id="text-input" placeholder="e.g. a wall-mounted hook for a bike helmet"></textarea>
+
+    <label for="size-input">Max build size (mm, optional -- uses the server default if blank)</label>
+    <input id="size-input" type="number" min="1" placeholder="250">
+
+    <button id="generate-btn">Generate</button>
+
+    <div id="status"></div>
+    <pre id="result" hidden></pre>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

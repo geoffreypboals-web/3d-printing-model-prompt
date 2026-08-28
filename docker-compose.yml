@@ -1,0 +1,30 @@
+# Project: 3D Printing Model Prompt
+# File: /home/user/3d-printing-model-prompt/docker-compose.yml
+# Description: Single-service compose file -- see launch.py for how the
+#     host port is resolved and published as APP_HOST_PORT before this
+#     runs. Every environment variable below has a ${VAR:-default}
+#     fallback, so `docker compose up` never crash-loops on a genuinely
+#     blank value the way a required-with-no-default var would.
+# Troubleshooting:
+#     - Ollama calls failing from inside the container: OLLAMA_BASE_URL
+#       defaults to host.docker.internal, which resolves to the host on
+#       Docker Desktop (Windows/Mac). On Linux, either run Ollama in
+#       Docker on the same user-defined network, or add
+#       `extra_hosts: ["host.docker.internal:host-gateway"]` here (Docker
+#       Engine 20.10+) if running Ollama natively on the Linux host.
+services:
+  app:
+    build: .
+    ports:
+      - "${APP_HOST_PORT:-8800}:8000"
+    environment:
+      LLM_PROVIDER: "${LLM_PROVIDER:-ollama}"
+      OLLAMA_BASE_URL: "${OLLAMA_BASE_URL:-http://host.docker.internal:11434}"
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-llama3.1}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      ANTHROPIC_MODEL: "${ANTHROPIC_MODEL:-claude-sonnet-5}"
+      MAX_PROMPT_CHARS: "${MAX_PROMPT_CHARS:-4000}"
+      MAX_MODEL_SIZE_MM: "${MAX_MODEL_SIZE_MM:-250}"
+      REQUEST_TIMEOUT_SECONDS: "${REQUEST_TIMEOUT_SECONDS:-60}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

@@ -1,0 +1,14 @@
+# Project: 3D Printing Model Prompt
+# File: /home/user/3d-printing-model-prompt/ruff.toml
+# Description: Pins the linter's rule set explicitly (CLAUDE.md rule 14 --
+#     "configured in the repo so it runs identically for anyone") rather
+#     than relying on ruff's own shifting defaults across versions.
+line-length = 120
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "W", "C4", "PL", "RUF"]
+ignore = [
+    "PLR0913",  # too many arguments -- not a useful signal for this project's small call sites
+    "PLR2004",  # magic value comparison -- HTTP status codes read fine as literals
+]
