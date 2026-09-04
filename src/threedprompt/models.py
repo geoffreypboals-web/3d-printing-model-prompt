@@ -15,7 +15,7 @@ Troubleshooting:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal
 
@@ -110,3 +110,135 @@ class HealthResponse(BaseModel):
     blender_available: bool
     llm_provider: str
     llm_reachable: bool
+
+
+# --- Watertight analysis/repair (hole detection & classification) ---
+# Added alongside thickness.py's mesh-shell path: both features share the
+# same "load into headless Blender, do bmesh work, export" shape, but
+# watertight.py's job is finding/closing gaps rather than adding wall
+# thickness. See docs/adr/0004-watertight-hole-detection-and-repair.md.
+
+
+class HoleClassification(str, Enum):
+    """Verdict watertight.py's heuristic assigns to one detected hole."""
+
+    INTENTIONAL_OPENING = "intentional_opening"
+    LIKELY_DEFECT = "likely_defect"
+    AMBIGUOUS = "ambiguous"
+
+
+@dataclass
+class BoundingBox:
+    """Axis-aligned min/max corners, in the mesh's local units."""
+
+    min: tuple[float, float, float]
+    max: tuple[float, float, float]
+
+    @property
+    def size(self) -> tuple[float, float, float]:
+        """Return the (x, y, z) extents of the box."""
+        return tuple(mx - mn for mn, mx in zip(self.min, self.max, strict=True))
+
+
+@dataclass
+class Hole:
+    """
+    One connected boundary-edge loop found on a mesh - a location where
+    the surface is not watertight, either a deliberate opening (a cup's
+    mouth, an open box top) or an unintentional gap from bad topology.
+    """
+
+    id: int
+    vertex_indices: list[int]
+    centroid: tuple[float, float, float]
+    area: float
+    perimeter: float
+    planarity: float
+    classification: HoleClassification = HoleClassification.AMBIGUOUS
+    confidence: float = 0.0
+    reason: str = ""
+
+
+@dataclass
+class FlippedNormalIsland:
+    """A connected group of faces whose normals disagree with their neighbors (an "inverted wrinkle")."""
+
+    id: int
+    face_indices: list[int]
+    centroid: tuple[float, float, float]
+    face_count: int
+
+
+@dataclass
+class WatertightReport:
+    """Full result of analyzing one mesh file for print-readiness."""
+
+    source_path: str
+    is_watertight: bool
+    vertex_count: int
+    face_count: int
+    total_surface_area: float
+    bounding_box: BoundingBox
+    holes: list[Hole] = field(default_factory=list)
+    flipped_normal_islands: list[FlippedNormalIsland] = field(default_factory=list)
+    nonmanifold_junction_edge_count: int = 0
+    blender_version: str = ""
+    viewer_path: str = ""
+
+
+@dataclass
+class RepairResult:
+    """Result of asking Blender to close a chosen set of holes."""
+
+    output_path: str
+    closed_hole_ids: list[int]
+    is_watertight: bool
+    remaining_holes: list[Hole] = field(default_factory=list)
+    viewer_path: str = ""
+
+
+class BoundingBoxSchema(BaseModel):
+    """JSON shape of a BoundingBox, nested in AnalyzeResponse to match the viewer's report.bounding_box.min/max."""
+
+    min: tuple[float, float, float]
+    max: tuple[float, float, float]
+
+
+class AnalyzeResponse(BaseModel):
+    """POST /models/{model_id}/analyze response body."""
+
+    model_id: str
+    is_watertight: bool
+    vertex_count: int
+    face_count: int
+    total_surface_area: float
+    bounding_box: BoundingBoxSchema
+    holes: list[dict]
+    flipped_normal_islands: list[dict]
+    nonmanifold_junction_edge_count: int
+    blender_version: str
+    viewer_glb_url: str | None = None
+
+
+class RepairRequest(BaseModel):
+    """POST /models/{model_id}/repair request body."""
+
+    hole_ids: list[int] = Field(..., min_length=1, description="Hole ids (from a prior /analyze) to close.")
+
+
+class RepairResponse(BaseModel):
+    """POST /models/{model_id}/repair response body."""
+
+    model_id: str
+    closed_hole_ids: list[int]
+    is_watertight: bool
+    remaining_holes: list[dict]
+    viewer_glb_url: str | None = None
+    download_url: str
+
+
+class UploadResponse(BaseModel):
+    """POST /watertight/upload response body."""
+
+    model_id: str
+    filename: str

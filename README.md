@@ -1,18 +1,24 @@
 # 3D Printing Model Prompt
 
 Turns a natural-language description of a part into a 3D-printable STL file,
-and can increase the wall thickness of an existing model. Simple, mechanical
-parts (brackets, mounts, spacers, enclosures) are built with
-**[OpenSCAD](https://openscad.org/)**; complex, organic, or characterful
-shapes (creatures, figurines, freeform sculptures) are built with
-**[Blender](https://www.blender.org/)** running headless. An HTTP API in
-front of both backends decides which one to use per request.
+can increase the wall thickness of an existing model, and can check a model
+for watertightness - finding surface gaps a slicer would choke on and
+telling deliberate openings (a cup's mouth, an open box top) apart from
+unintentional defects (a couple of misaligned vertices leaving a hole).
+Simple, mechanical parts (brackets, mounts, spacers, enclosures) are built
+with **[OpenSCAD](https://openscad.org/)**; complex, organic, or
+characterful shapes (creatures, figurines, freeform sculptures) are built
+with **[Blender](https://www.blender.org/)** running headless, which also
+powers wall-thickness shelling and watertight analysis/repair. An HTTP API
+in front decides which backend to use per request.
 
 **Browser UI**: once the service is running, open `http://localhost:8000/`
-in a browser for a simple page to generate a model from a prompt, or pick a
-local STL/OBJ file, increase its wall thickness, and download the result -
-no curl or API client needed. The full HTTP API (below) is also available
-for scripting/automation, with interactive docs at `/docs`.
+in a browser for a simple page to generate a model from a prompt, pick a
+local file to increase its wall thickness, or open the
+[watertight checker](#watertight-check--repair) - a 3D viewer for spotting
+and closing holes - no curl or API client needed. The full HTTP API (below)
+is also available for scripting/automation, with interactive docs at
+`/docs`.
 
 ## How routing works
 
@@ -64,6 +70,42 @@ re-download the same result later via `GET /models/{model_id}/download`.
 Either way, thickening produces a *new* model rather than overwriting the
 original.
 
+## Watertight check & repair
+
+Finds boundary-edge holes (surface gaps) and inverted-normal ("wrinkle")
+defects in a model - either one this service generated, or an arbitrary
+upload - and classifies each hole as a likely **intentional opening** (a
+cup's mouth, an open box top, an open base underside) or a likely
+**unintentional defect** (a couple of misaligned/duplicate vertices
+leaving a gap), with a confidence and plain-language reason for each.
+
+Open `http://localhost:8000/watertight.html` for the 3D viewer: upload a
+model, see every flagged hole as a color-coded clickable marker on the
+actual mesh (red = likely defect, green = likely intentional, amber =
+ambiguous), click a marker or its row in the side panel to pick which to
+close, then repair and download. The underlying API:
+
+1. `POST /watertight/upload` - upload a mesh (any of
+   `.stl .obj .ply .glb .gltf .fbx`), get back a `model_id`.
+2. `POST /models/{model_id}/analyze` - runs the check, returns
+   `is_watertight`, every `holes[]` entry's classification/confidence/
+   reason, any `flipped_normal_islands[]`, and a `viewer_glb_url` for the
+   3D preview.
+3. `POST /models/{model_id}/repair` with `{"hole_ids": [...]}` - closes
+   just those holes (leaving the rest open), re-checks watertightness,
+   and returns a fresh `download_url`. **Hole ids are positional** - they
+   renumber whenever the file changes, including after closing some of
+   them, so always use ids from the most recent `/analyze` response.
+
+A model generated via `POST /generate`, or thickened via
+`/models/{model_id}/thicken`, can be checked the same way - just call
+`/models/{model_id}/analyze` directly on its existing `model_id`, no
+separate upload needed.
+
+See `docs/adr/0004-watertight-hole-detection-and-repair.md` for how the
+classification heuristic works and why it's a heuristic rather than an
+LLM/ML call.
+
 ## API
 
 | Method | Path                          | Description                                                          |
@@ -73,6 +115,10 @@ original.
 | GET    | `/models/{model_id}/download` | Download the STL                                                        |
 | POST   | `/models/{model_id}/thicken`  | `{"amount_mm": 1.5}` -> JSON w/ new model_id (see above)                 |
 | POST   | `/thicken`                    | multipart upload (`file`, `amount_mm`) -> **the thickened STL file**     |
+| POST   | `/watertight/upload`          | multipart upload (`file`) -> JSON w/ model_id                           |
+| POST   | `/models/{model_id}/analyze`  | Watertight check -> JSON report (holes, classifications, viewer URL)    |
+| POST   | `/models/{model_id}/repair`   | `{"hole_ids": [0, 2]}` -> closes those holes, re-checks, new download   |
+| GET    | `/models/{model_id}/viewer.glb` | Web-viewable GLB preview (produced by a prior analyze/repair call)   |
 
 Interactive docs are auto-generated by FastAPI at `/docs` once the service
 is running - `/thicken` shows up there with a file-picker and an
@@ -181,6 +227,7 @@ This project is intended to be open source (CLAUDE.md rule 7), MIT licensed
 |---|---|---|
 | FastAPI, Uvicorn, Pydantic, Requests | MIT/BSD | permissive |
 | `anthropic` (Python SDK) | MIT | only used if `LLM_PROVIDER=claude` |
+| three.js r0.160.0 (vendored, `src/threedprompt/static/vendor/three/`) | MIT | watertight viewer; vendored not CDN-loaded, per rule 4 |
 | OpenSCAD | GPL-2.0 | invoked as an external CLI process (subprocess), not linked into this codebase - GPL applies to OpenSCAD itself, not to this project |
 | Blender | GPL-3.0 | same: invoked as an external headless process, not linked in |
 
@@ -205,4 +252,5 @@ as plain files with no database; there is no automated backup - see
 Early stage - not yet announced for outside contributions, so there's no
 `CONTRIBUTING.md` yet (rule 19). See `CHANGELOG.md` for what's shipped and
 `docs/adr/` for the reasoning behind the OpenSCAD/Blender split, the hybrid
-classifier, and the wall-thickness strategy.
+classifier, the wall-thickness strategy, and the watertight hole-detection/
+repair feature.

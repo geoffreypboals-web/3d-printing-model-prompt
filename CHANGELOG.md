@@ -6,6 +6,25 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ## [Unreleased]
 
+### Added (watertight analysis/repair)
+
+- `POST /watertight/upload`, `POST /models/{model_id}/analyze`,
+  `POST /models/{model_id}/repair`, `GET /models/{model_id}/viewer.glb` -
+  finds boundary-edge holes and inverted-normal ("wrinkle") defects on a
+  mesh via headless Blender, classifies each hole as a likely intentional
+  opening (a cup's mouth, an open box top, an open base underside) vs. a
+  likely unintentional defect via a pure-Python geometric heuristic
+  (`src/threedprompt/hole_classifier.py`), and lets the caller close a
+  chosen subset and re-check watertightness.
+- Browser 3D viewer at `/watertight.html` (three.js, vendored locally -
+  see `src/threedprompt/static/vendor/three/`) - upload a model, see every
+  flagged hole as a color-coded clickable marker on the actual mesh, pick
+  which to close, download the repaired file.
+- `docs/adr/0004-watertight-hole-detection-and-repair.md` records the
+  design (heuristic vs. ML classification, why hole ids are positional,
+  the Blender/glTF axis-conversion and OrbitControls-singularity bugs
+  found and fixed during development).
+
 ### Changed
 
 - Default `MAX_UPLOAD_BYTES` raised from 50MB to 300MB - dense/scanned

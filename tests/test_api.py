@@ -20,13 +20,18 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from threedprompt import blender_generator, main, openscad_generator, storage, thickness
+from threedprompt import blender_generator, main, openscad_generator, storage, thickness, watertight
 from threedprompt.models import (
     Backend,
+    BoundingBox,
     ClassificationMethod,
     ClassificationResult,
     Complexity,
     GenerationResult,
+    Hole,
+    HoleClassification,
+    RepairResult,
+    WatertightReport,
 )
 
 
@@ -268,3 +273,133 @@ def test_thicken_upload_rejects_oversized_file(monkeypatch, client):
         data={"amount_mm": "2.0"},
     )
     assert resp.status_code == 413
+
+
+def _fake_watertight_report(holes=None, is_watertight=False):
+    return WatertightReport(
+        source_path="model.stl",
+        is_watertight=is_watertight,
+        vertex_count=8,
+        face_count=11,
+        total_surface_area=24.0,
+        bounding_box=BoundingBox(min=(-1.0, -1.0, -1.0), max=(1.0, 1.0, 1.0)),
+        holes=holes or [],
+        viewer_path="/fake/viewer.glb",
+    )
+
+
+def test_watertight_upload_golden_path(client):
+    resp = client.post(
+        "/watertight/upload",
+        files={"file": ("model.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["model_id"]
+    assert body["filename"] == "model.stl"
+
+
+def test_watertight_upload_rejects_unsupported_extension(client):
+    resp = client.post(
+        "/watertight/upload",
+        files={"file": ("model.txt", b"not a mesh", "text/plain")},
+    )
+    assert resp.status_code == 422
+
+
+def test_analyze_model_golden_path(monkeypatch, client):
+    upload_resp = client.post(
+        "/watertight/upload",
+        files={"file": ("model.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
+    )
+    model_id = upload_resp.json()["model_id"]
+
+    hole = Hole(
+        id=0,
+        vertex_indices=[0, 1, 2],
+        centroid=(0.0, 0.0, 1.0),
+        area=3.0,
+        perimeter=6.14,
+        planarity=1.0,
+        classification=HoleClassification.LIKELY_DEFECT,
+        confidence=0.9,
+        reason="a stray gap",
+    )
+    monkeypatch.setattr(watertight, "analyze_mesh", lambda *a, **k: _fake_watertight_report(holes=[hole]))
+
+    resp = client.post(f"/models/{model_id}/analyze")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["is_watertight"] is False
+    assert len(body["holes"]) == 1
+    assert body["holes"][0]["classification"] == "likely_defect"
+    assert body["viewer_glb_url"] == f"/models/{model_id}/viewer.glb"
+
+
+def test_analyze_model_missing_model_returns_404(client):
+    resp = client.post("/models/does-not-exist/analyze")
+    assert resp.status_code == 404
+
+
+def test_analyze_model_blender_failure_returns_503(monkeypatch, client):
+    upload_resp = client.post(
+        "/watertight/upload",
+        files={"file": ("model.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
+    )
+    model_id = upload_resp.json()["model_id"]
+
+    def _raise(*a, **k):
+        raise watertight.WatertightError("blender binary not found on PATH")
+
+    monkeypatch.setattr(watertight, "analyze_mesh", _raise)
+    resp = client.post(f"/models/{model_id}/analyze")
+    assert resp.status_code == 503
+
+
+def test_repair_model_golden_path(monkeypatch, client):
+    upload_resp = client.post(
+        "/watertight/upload",
+        files={"file": ("model.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
+    )
+    model_id = upload_resp.json()["model_id"]
+
+    def fake_repair_mesh(input_path, hole_ids, output_path, *, viewer_output=None):
+        from pathlib import Path
+
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).write_bytes(b"solid repaired\nendsolid repaired\n")
+        return RepairResult(
+            output_path=output_path,
+            closed_hole_ids=hole_ids,
+            is_watertight=True,
+            remaining_holes=[],
+            viewer_path=viewer_output or "",
+        )
+
+    monkeypatch.setattr(watertight, "repair_mesh", fake_repair_mesh)
+    resp = client.post(f"/models/{model_id}/repair", json={"hole_ids": [0]})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["is_watertight"] is True
+    assert body["closed_hole_ids"] == [0]
+    assert body["download_url"] == f"/models/{model_id}/download"
+
+
+def test_repair_model_rejects_empty_hole_ids(client):
+    upload_resp = client.post(
+        "/watertight/upload",
+        files={"file": ("model.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
+    )
+    model_id = upload_resp.json()["model_id"]
+    resp = client.post(f"/models/{model_id}/repair", json={"hole_ids": []})
+    assert resp.status_code == 422
+
+
+def test_viewer_glb_missing_returns_404(client):
+    upload_resp = client.post(
+        "/watertight/upload",
+        files={"file": ("model.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
+    )
+    model_id = upload_resp.json()["model_id"]
+    resp = client.get(f"/models/{model_id}/viewer.glb")
+    assert resp.status_code == 404

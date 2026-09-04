@@ -113,6 +113,54 @@ meshes. `mesh_shell()` (`src/threedprompt/thickness.py`) already enables
 upload may need repair first (e.g. Blender's own 3D Print Toolbox /
 "Make Manifold" add-on) before it can be shelled cleanly.
 
+## `ModuleNotFoundError: No module named 'numpy'` from a watertight-check/repair call
+
+**Symptom:** `POST /models/{model_id}/analyze` or `/repair` fails with a
+`WatertightError` whose message is a Python traceback from
+`io_scene_gltf2/blender/exp/gltf2_blender_gather_tree.py` ending in
+`ModuleNotFoundError: No module named 'numpy'`.
+
+**Cause:** the Debian/Ubuntu `apt` package for Blender links against the
+*system* Python rather than bundling its own the way the official
+blender.org downloads do. Its built-in glTF export addon (used for the
+`viewer.glb` preview `watertight.py` produces alongside every analysis/
+repair) imports numpy at export time. `thickness.py`'s mesh-shell path
+never hits this because it only exports STL, never glTF.
+
+**Fix:** install numpy for that same system Python:
+`sudo apt-get install python3-numpy` (already in the Dockerfile). If
+Blender was installed a different way (a blender.org tarball, snap,
+flatpak), it likely bundles its own Python and this shouldn't apply.
+
+## A hole id from an earlier `/analyze` response 404s or "not found"s on `/repair`
+
+Hole ids are **positional**, not stable identifiers - they come from the
+order `blender_scripts/_shared.group_boundary_edges()` encounters boundary
+edges in bmesh's own edge index order for that specific file's state.
+Closing some holes renumbers whatever's left. `main.py`'s `/repair` route
+already re-analyzes after every repair so the browser viewer's cached ids
+stay correct automatically; a script calling the API directly needs to
+call `/analyze` again before reusing an id from an older response.
+
+## A real intentional opening (cup mouth, open box top) gets flagged as a defect, or vice versa
+
+`hole_classifier.py`'s classification is a heuristic, not a certainty -
+see `docs/adr/0004-watertight-hole-detection-and-repair.md` for what it
+weighs and why. Treat it as a strong hint, not a verdict, and use the
+`/watertight.html` viewer to confirm before closing anything on a model
+you care about - that's exactly why every hole's reason/confidence is
+shown rather than auto-deciding.
+
+## Markers in the watertight viewer appear in the wrong place, or nowhere near the model
+
+The analysis JSON reports coordinates in the mesh's own space, but the
+viewer's GLB preview is exported with Blender's default glTF "+Y up" axis
+conversion. `static/watertight.html`'s `pointToGltf()`/`bboxToGltf()`
+convert every point/bbox from the API before placing it in the scene - if
+a future change adds a new place that consumes `hole.centroid`,
+`island.centroid`, or `bounding_box` from the API, route it through those
+same helpers first.
+
 ## Backups & data durability
 
 `OUTPUT_DIR` (a plain directory, `./output` by default / a Docker named

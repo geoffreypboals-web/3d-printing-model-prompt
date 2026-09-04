@@ -12,14 +12,22 @@
 #       `docker build --no-cache -t threedprompt .`.
 #     - The image is large (~1.5GB+) because Blender pulls in Mesa/OpenGL
 #       libraries even for headless use - that's expected, not a bug.
+#     - watertight.py's viewer.glb export (glTF) fails inside Blender with
+#       "No module named 'numpy'" without python3-numpy below - the Debian
+#       apt `blender` package links the *system* Python rather than
+#       bundling its own, so its glTF export addon needs numpy available
+#       to that same system Python. See TROUBLESHOOTING.md.
 
 FROM python:3.11-slim
 
-# openscad + blender and the shared libraries headless Blender needs at
-# runtime even without a display (Mesa/X11 client libs).
+# openscad + blender, python3-numpy (see the numpy note above - only
+# thickness.py's STL-only Solidify path avoided needing this; watertight.py's
+# glTF viewer export does not), and the shared libraries headless Blender
+# needs at runtime even without a display (Mesa/X11 client libs).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openscad \
     blender \
+    python3-numpy \
     libgl1 \
     libglu1-mesa \
     libxi6 \
