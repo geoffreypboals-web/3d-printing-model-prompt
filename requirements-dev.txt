@@ -1,0 +1,8 @@
+# Project: 3D Printing Model Prompt
+# File: /home/user/3d-printing-model-prompt/requirements-dev.txt
+# Description: Development-only dependencies (testing, linting/formatting)
+#     — not needed to run the app, only to develop it. Install with
+#     `pip install -r requirements.txt -r requirements-dev.txt`.
+pytest==8.3.4
+ruff==0.8.4
+httpx==0.28.1

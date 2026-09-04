@@ -1,0 +1,12 @@
+# Project: 3D Printing Model Prompt
+# File: /home/user/3d-printing-model-prompt/requirements.txt
+# Description: Runtime Python dependencies for the mesh watertight-repair
+#     API (src/mesh_repair/api.py) and the service layer it wraps
+#     (src/mesh_repair/service.py). Blender itself is NOT a pip
+#     dependency — it's an external binary the service shells out to;
+#     see README.md / Dockerfile for how it's installed.
+# Licenses (rule 7): FastAPI (MIT), Uvicorn (BSD-3-Clause), python-multipart
+#     (Apache-2.0) — all permissive, open-source-redistribution-friendly.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20

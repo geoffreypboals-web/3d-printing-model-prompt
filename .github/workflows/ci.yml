@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # Blender + numpy so the tests/test_service_integration.py suite
+      # (a real analyze -> repair -> re-check round trip) actually runs in
+      # CI instead of silently skipping — see TROUBLESHOOTING.md for why
+      # numpy is needed alongside the distro Blender package.
+      - name: Install Blender
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends blender python3-numpy
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Lint (ruff check)
+        run: ruff check src/ tests/
+
+      - name: Formatting (ruff format --check)
+        run: ruff format --check src/ tests/
+
+      - name: Test
+        run: pytest tests/ -v
+
+      - name: Build check (import the app)
+        run: PYTHONPATH=src python -c "from mesh_repair.api import app; print('OK:', app.title)"

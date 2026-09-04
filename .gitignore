@@ -216,3 +216,19 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# 3D Printing Model Prompt: uploaded/generated mesh files (rule 17 — never
+# commit user-uploaded model data) and local test fixtures.
+/data/uploads/
+*.stl
+*.glb
+*.gltf
+!tests/fixtures/**/*.stl
+!tests/fixtures/**/*.glb
+
+# The generic Python "build/" rule above also matches
+# viewer/vendor/three/build/ (three.js's own build output directory name)
+# — un-ignore the vendored three.js library specifically; see
+# viewer/vendor/README.md for what's vendored there and why.
+!/viewer/vendor/three/build/
+!/viewer/vendor/three/build/*.js

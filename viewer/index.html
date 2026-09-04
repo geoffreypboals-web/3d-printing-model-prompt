@@ -1,0 +1,583 @@
+<!--
+Project: 3D Printing Model Prompt
+File: /home/user/3d-printing-model-prompt/viewer/index.html
+Description: Single-page three.js viewer for the mesh watertight-repair
+    workflow. Upload a mesh, analyze it via the API in
+    ../src/mesh_repair/api.py, see every detected hole as a colored
+    marker (red = likely defect, green = likely an intentional opening,
+    amber = ambiguous) placed at its centroid, click a marker or its row
+    in the side panel to toggle "close this one", then submit the
+    selection to /repair and download the result once it's watertight.
+Inputs: Served by api.py at "/"; talks to that same origin's /api/models/*
+    endpoints. No inputs of its own beyond user interaction.
+Outputs: None (a browser page) — all state lives in the API/job it talks to.
+Troubleshooting:
+    - Blank viewport after "Analyze": open the browser console — GLTFLoader
+      throws there if /api/models/{id}/viewer.glb 404s (usually means
+      /analyze itself failed; check the status panel's error text first).
+    - Markers appear in the wrong place relative to the mesh: the GLB the
+      API serves and the hole centroids in the JSON report both come from
+      the *same* Blender pass (analyze_watertight.py exports the GLB after
+      import+join+transform_apply, and computes centroids from that same
+      geometry) — if they ever look offset, that invariant broke, not the
+      viewer's camera/transform math.
+    - Clicking a marker does nothing: markers are only raycast-hittable
+      while holes[] is non-empty; a fully watertight mesh has none.
+-->
+<title>Watertight Repair Viewer</title>
+<style>
+  :root {
+    --bg: #f7f7f8;
+    --panel-bg: #ffffff;
+    --border: #e2e2e6;
+    --text: #1c1c1f;
+    --text-dim: #6b6b73;
+    --accent: #3d6bff;
+    --defect: #e5484d;
+    --intentional: #2fae5c;
+    --ambiguous: #d99a1b;
+    --flipped: #9757d1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16161a;
+      --panel-bg: #1f1f24;
+      --border: #313138;
+      --text: #ececef;
+      --text-dim: #9a9aa2;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16161a;
+    --panel-bg: #1f1f24;
+    --border: #313138;
+    --text: #ececef;
+    --text-dim: #9a9aa2;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    height: 100vh;
+    display: flex;
+    overflow: hidden;
+  }
+  #viewport { flex: 1; position: relative; min-width: 0; }
+  #viewport canvas { display: block; width: 100%; height: 100%; }
+  #tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+    max-width: 260px;
+    display: none;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  }
+  #sidebar {
+    width: 360px;
+    flex-shrink: 0;
+    background: var(--panel-bg);
+    border-left: 1px solid var(--border);
+    padding: 16px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); margin: 0; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  input[type="file"] { font-size: 12px; }
+  button {
+    font-size: 13px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--accent);
+    color: white;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button.secondary { background: transparent; color: var(--text); }
+  #status { font-size: 12px; color: var(--text-dim); white-space: pre-wrap; }
+  #status.error { color: var(--defect); }
+  #status.ok { color: var(--intentional); }
+  .hole-row {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    cursor: pointer;
+  }
+  .hole-row.selected { outline: 2px solid var(--accent); }
+  .swatch { width: 10px; height: 10px; border-radius: 50%; margin-top: 3px; flex-shrink: 0; }
+  .hole-row .body { flex: 1; min-width: 0; }
+  .hole-row .title { font-size: 12.5px; font-weight: 600; display: flex; justify-content: space-between; }
+  .hole-row .reason { font-size: 11.5px; color: var(--text-dim); margin-top: 2px; }
+  #holeList, #islandList { display: flex; flex-direction: column; gap: 8px; }
+  #legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--text-dim); }
+  #legend span { display: inline-flex; align-items: center; gap: 4px; }
+  a.download-link { font-size: 13px; color: var(--accent); }
+</style>
+
+<div id="viewport">
+  <div id="tooltip"></div>
+</div>
+<div id="sidebar">
+  <div>
+    <h1>Watertight Repair</h1>
+    <div id="legend">
+      <span><i class="swatch" style="background:var(--defect)"></i>likely defect</span>
+      <span><i class="swatch" style="background:var(--intentional)"></i>intentional opening</span>
+      <span><i class="swatch" style="background:var(--ambiguous)"></i>ambiguous</span>
+      <span><i class="swatch" style="background:var(--flipped)"></i>inverted normals</span>
+    </div>
+  </div>
+
+  <div class="field">
+    <h2>1. Load a model</h2>
+    <input id="fileInput" type="file" accept=".stl,.obj,.ply,.glb,.gltf,.fbx" />
+    <button id="analyzeBtn" disabled>Upload &amp; Analyze</button>
+  </div>
+
+  <div id="status"></div>
+
+  <div class="field">
+    <h2>2. Flagged holes — click a row or a marker to toggle</h2>
+    <div id="holeList"></div>
+  </div>
+
+  <div class="field" id="islandField" style="display:none">
+    <h2>Inverted-normal regions</h2>
+    <div id="islandList"></div>
+    <div style="font-size:11.5px;color:var(--text-dim)">
+      Fixed automatically the next time you repair any hole (or click
+      "Fix normals only" below if there are none to close).
+    </div>
+  </div>
+
+  <div class="field">
+    <h2>3. Repair</h2>
+    <button id="repairBtn" disabled>Close selected holes</button>
+    <button id="fixNormalsBtn" class="secondary" disabled>Fix normals only</button>
+    <a id="downloadLink" class="download-link" style="display:none" href="#">Download repaired file</a>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "/vendor/three/build/three.module.min.js",
+    "three/addons/": "/vendor/three/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
+// The analysis JSON reports coordinates in the mesh's own (Blender,
+// Z-up) space, but analyze_watertight.py exports the viewer GLB with
+// Blender's default glTF "+Y up" axis conversion — empirically confirmed
+// as (x, y, z)_blender -> (x, z, -y)_gltf. Every point/bbox from the
+// report has to go through this same conversion before it's placed in
+// the three.js scene, or markers land nowhere near the mesh surface
+// they're supposed to flag.
+function pointToGltf([x, y, z]) {
+  return [x, z, -y];
+}
+function bboxToGltf(bbox) {
+  const [xmin, ymin, zmin] = bbox.min;
+  const [xmax, ymax, zmax] = bbox.max;
+  return { min: [xmin, zmin, -ymax], max: [xmax, zmax, -ymin] };
+}
+
+const COLORS = {
+  intentional_opening: 0x2fae5c,
+  likely_defect: 0xe5484d,
+  ambiguous: 0xd99a1b,
+  flipped: 0x9757d1,
+  selected: 0x3d6bff,
+};
+
+const fileInput = document.getElementById("fileInput");
+const analyzeBtn = document.getElementById("analyzeBtn");
+const repairBtn = document.getElementById("repairBtn");
+const fixNormalsBtn = document.getElementById("fixNormalsBtn");
+const statusEl = document.getElementById("status");
+const holeListEl = document.getElementById("holeList");
+const islandListEl = document.getElementById("islandList");
+const islandFieldEl = document.getElementById("islandField");
+const downloadLink = document.getElementById("downloadLink");
+const tooltip = document.getElementById("tooltip");
+const viewport = document.getElementById("viewport");
+
+let jobId = null;
+let report = null;
+let selectedHoleIds = new Set();
+let meshRoot = null;
+let holeMarkers = []; // { mesh, hole }
+let islandMarkers = [];
+
+// Update the status panel text and its color (kind: "" | "ok" | "error").
+function setStatus(text, kind) {
+  statusEl.textContent = text;
+  statusEl.className = kind || "";
+}
+
+// --- three.js scene setup -------------------------------------------------
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(getComputedStyle(document.body).getPropertyValue("--bg").trim() || 0x16161a);
+
+const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 10000);
+camera.position.set(3, 3, 3);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+viewport.insertBefore(renderer.domElement, tooltip);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x444455, 1.2));
+const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
+dirLight.position.set(5, 10, 7);
+scene.add(dirLight);
+
+// Resize the renderer/camera to match the current viewport panel size.
+function resize() {
+  const w = viewport.clientWidth, h = viewport.clientHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+}
+window.addEventListener("resize", resize);
+resize();
+
+// Per-frame render loop: update camera damping/orbit state and redraw.
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+// Exposed for manual/automated debugging in the browser console (e.g.
+// checking a marker's actual world position against the mesh) — not used
+// by the app itself.
+window.__viewerDebug = { scene, camera, controls, get holeMarkers() { return holeMarkers; } };
+
+// --- raycasting / picking --------------------------------------------------
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+
+renderer.domElement.addEventListener("pointermove", (ev) => {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const hit = raycaster.intersectObjects(holeMarkers.map((m) => m.mesh).concat(islandMarkers.map((m) => m.mesh)));
+  if (hit.length) {
+    const obj = hit[0].object;
+    tooltip.style.display = "block";
+    tooltip.style.left = ev.clientX + 12 + "px";
+    tooltip.style.top = ev.clientY + 12 + "px";
+    tooltip.textContent = obj.userData.reason || obj.userData.label || "";
+  } else {
+    tooltip.style.display = "none";
+  }
+});
+
+renderer.domElement.addEventListener("click", (ev) => {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const hit = raycaster.intersectObjects(holeMarkers.map((m) => m.mesh));
+  if (hit.length) {
+    toggleHole(hit[0].object.userData.holeId);
+  }
+});
+
+// --- loading the model -------------------------------------------------
+// Remove all hole/island marker meshes from the scene (before loading a
+// new report's markers).
+function clearMarkers() {
+  for (const m of holeMarkers) scene.remove(m.mesh);
+  for (const m of islandMarkers) scene.remove(m.mesh);
+  holeMarkers = [];
+  islandMarkers = [];
+}
+
+function loadViewerModel(url, bbox) {
+  if (meshRoot) {
+    scene.remove(meshRoot);
+    meshRoot = null;
+  }
+  const loader = new GLTFLoader();
+  loader.load(
+    url,
+    (gltf) => {
+      meshRoot = gltf.scene;
+      meshRoot.traverse((o) => {
+        if (o.isMesh) {
+          o.material = new THREE.MeshStandardMaterial({ color: 0xbfbfc6, metalness: 0.05, roughness: 0.7 });
+        }
+      });
+      scene.add(meshRoot);
+      frameCamera(bbox, report ? report.holes : []);
+    },
+    undefined,
+    (err) => setStatus("Failed to load 3D preview: " + err.message, "error")
+  );
+}
+
+function frameCamera(bbox, holes) {
+  const gltfBbox = bboxToGltf(bbox);
+  const min = new THREE.Vector3(...gltfBbox.min);
+  const max = new THREE.Vector3(...gltfBbox.max);
+  const center = min.clone().add(max).multiplyScalar(0.5);
+  const size = max.clone().sub(min).length();
+
+  // Point the initial camera toward the flagged holes rather than a fixed
+  // generic corner — a hole can easily land on the far side of a mostly-
+  // closed shape, invisible until the user thinks to orbit around. Average
+  // the direction from center to each hole's centroid; fall back to the
+  // generic corner view when there's nothing flagged (e.g. already
+  // watertight) or the holes happen to average out near the center.
+  let viewDir = new THREE.Vector3(1, 0.8, 1);
+  if (holes && holes.length) {
+    const avg = new THREE.Vector3();
+    for (const h of holes) {
+      avg.add(new THREE.Vector3(...pointToGltf(h.centroid)).sub(center));
+    }
+    avg.divideScalar(holes.length);
+    if (avg.length() > 1e-6) viewDir = avg;
+  }
+  viewDir.normalize();
+
+  // OrbitControls (like camera.lookAt) is singular when the view direction
+  // is parallel to the world up vector (0,1,0) — e.g. a hole dead-center
+  // on a container's lid, which is a completely ordinary case here. Blend
+  // in a bit of a horizontal component whenever we're too close to that
+  // axis, so the camera keeps a well-defined orientation instead of
+  // silently ending up looking the wrong way.
+  const up = new THREE.Vector3(0, 1, 0);
+  if (Math.abs(viewDir.dot(up)) > 0.98) {
+    viewDir.add(new THREE.Vector3(0.3, 0, 0.3)).normalize();
+  }
+
+  camera.position.copy(center.clone().add(viewDir.multiplyScalar(size * 1.4 || 3)));
+  controls.target.copy(center);
+  controls.update();
+  window._bboxDiag = size || 1;
+}
+
+// Marker sphere/octahedron radius, scaled to the loaded model's size so
+// markers stay a sensible size across tiny and huge models alike.
+function markerRadius() {
+  return Math.max((window._bboxDiag || 1) * 0.02, 0.01);
+}
+
+// Add one clickable sphere marker per detected hole, color-coded by
+// classification, at its (axis-converted) centroid.
+function addHoleMarkers() {
+  const r = markerRadius();
+  const geo = new THREE.SphereGeometry(r, 16, 16);
+  for (const hole of report.holes) {
+    const color = selectedHoleIds.has(hole.id) ? COLORS.selected : COLORS[hole.classification];
+    const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.5 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(...pointToGltf(hole.centroid));
+    mesh.userData = {
+      holeId: hole.id,
+      reason: `Hole #${hole.id} — ${hole.classification.replace("_", " ")} (${Math.round(hole.confidence * 100)}% confidence)\n${hole.reason}`,
+    };
+    scene.add(mesh);
+    holeMarkers.push({ mesh, hole });
+  }
+}
+
+// Add one (non-clickable, informational) marker per flipped-normal
+// island, so the user can see where those defects are even though they
+// aren't individually selectable for repair.
+function addIslandMarkers() {
+  const r = markerRadius() * 0.8;
+  const geo = new THREE.OctahedronGeometry(r);
+  for (const island of report.flipped_normal_islands) {
+    const mat = new THREE.MeshStandardMaterial({ color: COLORS.flipped, emissive: COLORS.flipped, emissiveIntensity: 0.6 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(...pointToGltf(island.centroid));
+    mesh.userData = { label: `Inverted-normal patch (${island.face_count} faces) — fixed automatically on next repair.` };
+    scene.add(mesh);
+    islandMarkers.push({ mesh, island });
+  }
+}
+
+// --- side panel rendering -----------------------------------------------
+// Rebuild the "flagged holes" list in the side panel from the current
+// report and selection state.
+function renderHoleList() {
+  holeListEl.innerHTML = "";
+  if (!report || report.holes.length === 0) {
+    holeListEl.innerHTML = '<div style="font-size:12px;color:var(--text-dim)">No holes detected — the model is watertight.</div>';
+    return;
+  }
+  for (const hole of report.holes) {
+    const row = document.createElement("div");
+    row.className = "hole-row" + (selectedHoleIds.has(hole.id) ? " selected" : "");
+    row.innerHTML = `
+      <div class="swatch" style="background:#${COLORS[hole.classification].toString(16).padStart(6, "0")}"></div>
+      <div class="body">
+        <div class="title"><span>Hole #${hole.id}</span><span>${Math.round(hole.confidence * 100)}%</span></div>
+        <div class="reason">${hole.classification.replace("_", " ")} — ${hole.reason}</div>
+      </div>`;
+    row.addEventListener("click", () => toggleHole(hole.id));
+    holeListEl.appendChild(row);
+  }
+}
+
+// Rebuild the (informational, non-interactive) inverted-normal region list.
+function renderIslandList() {
+  islandListEl.innerHTML = "";
+  const islands = report ? report.flipped_normal_islands : [];
+  islandFieldEl.style.display = islands.length ? "flex" : "none";
+  for (const island of islands) {
+    const row = document.createElement("div");
+    row.className = "hole-row";
+    row.innerHTML = `
+      <div class="swatch" style="background:#${COLORS.flipped.toString(16).padStart(6, "0")}"></div>
+      <div class="body"><div class="title"><span>Region #${island.id}</span></div>
+      <div class="reason">${island.face_count} faces with inverted winding relative to their neighbors.</div></div>`;
+    islandListEl.appendChild(row);
+  }
+}
+
+// Toggle a hole's "close this one" selection state and refresh the
+// marker color + side panel + repair button to match.
+function toggleHole(id) {
+  if (selectedHoleIds.has(id)) selectedHoleIds.delete(id);
+  else selectedHoleIds.add(id);
+  for (const m of holeMarkers) {
+    const color = selectedHoleIds.has(m.hole.id) ? COLORS.selected : COLORS[m.hole.classification];
+    m.mesh.material.color.setHex(color);
+    m.mesh.material.emissive.setHex(color);
+  }
+  renderHoleList();
+  repairBtn.disabled = selectedHoleIds.size === 0;
+}
+
+// --- API calls -----------------------------------------------------------
+fileInput.addEventListener("change", () => {
+  analyzeBtn.disabled = !fileInput.files.length;
+});
+
+analyzeBtn.addEventListener("click", async () => {
+  const file = fileInput.files[0];
+  if (!file) return;
+  analyzeBtn.disabled = true;
+  setStatus("Uploading...");
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    const uploadRes = await fetch("/api/models", { method: "POST", body: form });
+    if (!uploadRes.ok) throw new Error(await uploadRes.text());
+    const uploadData = await uploadRes.json();
+    jobId = uploadData.job_id;
+
+    setStatus("Analyzing with Blender (this can take a few seconds)...");
+    await runAnalyze();
+  } catch (err) {
+    setStatus("Error: " + err.message, "error");
+    analyzeBtn.disabled = false;
+  }
+});
+
+// Call POST /analyze for the current job, load the resulting mesh/report
+// into the scene and side panel, and update the status line.
+async function runAnalyze() {
+  const res = await fetch(`/api/models/${jobId}/analyze`, { method: "POST" });
+  if (!res.ok) throw new Error(await res.text());
+  report = await res.json();
+  selectedHoleIds = new Set();
+  clearMarkers();
+  loadViewerModel(`/api/models/${jobId}/viewer.glb?t=${Date.now()}`, report.bounding_box);
+  addHoleMarkers();
+  addIslandMarkers();
+  renderHoleList();
+  renderIslandList();
+  repairBtn.disabled = true;
+  fixNormalsBtn.disabled = report.flipped_normal_islands.length === 0 || report.holes.length > 0;
+  analyzeBtn.disabled = false;
+  downloadLink.style.display = "none";
+
+  if (report.is_watertight) {
+    setStatus("Model is watertight — no holes found.", "ok");
+  } else {
+    setStatus(
+      `Found ${report.holes.length} hole(s) and ${report.flipped_normal_islands.length} inverted-normal region(s). ` +
+        "Review the flagged regions, then choose which holes to close.",
+    );
+  }
+}
+
+repairBtn.addEventListener("click", async () => submitRepair([...selectedHoleIds]));
+fixNormalsBtn.addEventListener("click", async () => {
+  // No holes selected but inverted-normal islands exist: repair_mesh
+  // requires at least one hole id, so there is nothing to "close-only"
+  // fix here yet — surface that plainly instead of silently no-op'ing.
+  setStatus(
+    "Normals are corrected automatically as part of closing any hole. " +
+      "This model has no holes to close, so there's nothing to repair.",
+    "error",
+  );
+});
+
+// Call POST /repair with the given hole ids, then refresh the report,
+// scene, and download link from the (renumbered) result.
+async function submitRepair(holeIds) {
+  if (!holeIds.length) return;
+  repairBtn.disabled = true;
+  setStatus("Repairing selected holes...");
+  try {
+    const res = await fetch(`/api/models/${jobId}/repair`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hole_ids: holeIds }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const result = await res.json();
+
+    // Refresh the full report so remaining hole ids/markers stay correct
+    // (closing holes renumbers whatever's left).
+    const reportRes = await fetch(`/api/models/${jobId}/analyze`, { method: "POST" });
+    report = await reportRes.json();
+    selectedHoleIds = new Set();
+    clearMarkers();
+    loadViewerModel(`/api/models/${jobId}/viewer.glb?t=${Date.now()}`, report.bounding_box);
+    addHoleMarkers();
+    addIslandMarkers();
+    renderHoleList();
+    renderIslandList();
+
+    downloadLink.href = result.download_url;
+    downloadLink.style.display = "inline";
+    setStatus(
+      result.is_watertight
+        ? "Repaired — the model is now watertight."
+        : `Closed ${result.closed_hole_ids.length} hole(s); ${result.remaining_holes.length} still open.`,
+      result.is_watertight ? "ok" : undefined,
+    );
+  } catch (err) {
+    setStatus("Error: " + err.message, "error");
+  } finally {
+    repairBtn.disabled = selectedHoleIds.size === 0;
+  }
+}
+</script>
