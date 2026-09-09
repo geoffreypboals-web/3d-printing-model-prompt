@@ -27,7 +27,7 @@ from collections import defaultdict
 
 
 def import_mesh(bpy, path: str) -> None:
-    """Import a mesh file (.stl/.obj/.ply/.glb/.gltf/.fbx) into the current scene."""
+    """Import a mesh file (.stl/.obj/.ply/.glb/.gltf/.fbx/.3dm) into the current scene."""
     ext = os.path.splitext(path)[1].lower()
     if ext == ".stl":
         bpy.ops.wm.stl_import(filepath=path)
@@ -39,6 +39,34 @@ def import_mesh(bpy, path: str) -> None:
         bpy.ops.import_scene.gltf(filepath=path)
     elif ext == ".fbx":
         bpy.ops.import_scene.fbx(filepath=path)
+    elif ext == ".3dm":
+        import sys
+
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "vendor"))
+        import rhino3dm_reader.read3dm as read3dm
+
+        result = read3dm.read_3dm(
+            bpy.context,
+            path,
+            {"import_brep": True, "import_extrusions": True, "import_meshes": True, "import_subd": True},
+        )
+        if "FINISHED" not in result:
+            raise ValueError(f"Failed to import .3dm file: {path}")
+
+        # read_3dm() scales the file's own units into Blender's scene units
+        # (meters, by this script's factory-default scene) -- everything
+        # else in this pipeline treats 1 Blender unit as 1mm, so a real
+        # ~40mm part lands as a ~0.04-unit mesh here. Left uncorrected,
+        # mm-scaled operations applied afterward (Solidify thickness,
+        # remove_doubles thresholds, etc.) are relatively enormous against
+        # geometry 1000x smaller than expected -- confirmed live this
+        # collapses a real bracket .3dm to 0 triangles. 1 meter = 1000mm.
+        bpy.ops.object.select_all(action="SELECT")
+        if bpy.context.selected_objects:
+            for imported_obj in bpy.context.selected_objects:
+                imported_obj.scale = tuple(component * 1000 for component in imported_obj.scale)
+            bpy.context.view_layer.objects.active = bpy.context.selected_objects[0]
+            bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
     else:
         raise ValueError(f"Unsupported input format: {ext}")
 
@@ -47,7 +75,7 @@ def export_mesh(bpy, path: str) -> None:
     """Export the active object to path (.stl/.obj/.ply/.glb/.gltf), format from extension."""
     ext = os.path.splitext(path)[1].lower()
     if ext == ".stl":
-        bpy.ops.export_mesh.stl(filepath=path)
+        bpy.ops.wm.stl_export(filepath=path, export_selected_objects=False)
     elif ext == ".obj":
         bpy.ops.wm.obj_export(filepath=path, export_selected_objects=False)
     elif ext == ".ply":
@@ -56,6 +84,39 @@ def export_mesh(bpy, path: str) -> None:
         bpy.ops.export_scene.gltf(filepath=path)
     else:
         raise ValueError(f"Unsupported output format: {ext}")
+
+
+def quad_remesh(bpy, obj, target_faces: int) -> None:
+    """
+    Retopologize obj into a clean, mostly-quad grid via QuadriFlow, targeting
+    roughly target_faces faces. Intended as a topology/cosmetic-only step,
+    but QuadriFlow does NOT reliably preserve watertightness on its own --
+    confirmed live: closing a cube's one missing triangle then quad-
+    remeshing it to a low target_faces reintroduced a boundary gap the
+    hole-fill had just closed. A light fill_holes + normals pass afterward
+    is what actually keeps the "doesn't affect watertightness" claim true;
+    without it, this function could silently undo a caller's own repair.
+    Every downstream STL export re-triangulates regardless of the quad
+    topology. Run this *after* repair/thicken steps, since QuadriFlow wants
+    clean, closed input to begin with.
+    """
+    import bmesh
+
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.quadriflow_remesh(
+        target_faces=target_faces,
+        use_preserve_sharp=True,
+        use_preserve_boundary=True,
+        use_mesh_symmetry=False,
+    )
+
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bmesh.ops.holes_fill(bm, edges=[e for e in bm.edges if len(e.link_faces) == 1], sides=0)
+    bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
+    bm.to_mesh(obj.data)
+    obj.data.update()
+    bm.free()
 
 
 def join_into_single_object(bpy):

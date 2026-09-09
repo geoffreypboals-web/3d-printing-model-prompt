@@ -68,3 +68,31 @@ def test_repair_closes_the_hole_and_becomes_watertight(cube_missing_one_triangle
 def test_repair_rejects_unknown_hole_id(cube_missing_one_triangle_stl, tmp_path):
     with pytest.raises(WatertightError, match="not found"):
         repair_mesh(str(cube_missing_one_triangle_stl), [99], str(tmp_path / "out.stl"))
+
+
+def test_repair_with_quad_remesh_stays_watertight(cube_missing_one_triangle_stl, tmp_path):
+    """
+    quad_target_faces is a topology/cosmetic pass (see _shared.quad_remesh's
+    docstring) that runs after hole-filling -- confirms it doesn't undo the
+    repair or break the export, on top of test_repair_closes_the_hole_...'s
+    coverage of the plain (non-quad) repair path.
+
+    Uses 200 as the target, not something tiny like 20 -- confirmed live
+    that a target at or below a mesh's own natural face count (a cube's
+    minimum is 6) can make QuadriFlow produce a genuinely degenerate
+    result even _shared.quad_remesh's own fill_holes safety net can't
+    cleanly recover; 50+ was reliable on this exact 11-triangle fixture in
+    that same live check. This isn't a realistic use case anyway -- real
+    calls target hundreds to thousands of faces on non-trivial meshes.
+    """
+    report = analyze_mesh(str(cube_missing_one_triangle_stl))
+    output_path = tmp_path / "repaired_quad.stl"
+
+    result = repair_mesh(
+        str(cube_missing_one_triangle_stl), [report.holes[0].id], str(output_path), quad_target_faces=200
+    )
+
+    assert result.is_watertight is True
+    assert output_path.is_file()
+    follow_up = analyze_mesh(str(output_path))
+    assert follow_up.is_watertight is True

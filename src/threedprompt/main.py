@@ -69,7 +69,7 @@ logger = get_logger(__name__)
 
 app = FastAPI(title="3D Printing Model Prompt", version="0.1.0")
 
-_ALLOWED_UPLOAD_SUFFIXES = {".stl", ".obj"}
+_ALLOWED_UPLOAD_SUFFIXES = {".stl", ".obj", ".3dm"}
 _VIEWER_GLB_FILENAME = "viewer.glb"
 
 
@@ -217,7 +217,7 @@ def thicken_existing_model(model_id: str, request: ThickenRequest) -> ThickenRes
     try:
         stl_source = storage.stl_path(model_id)
         new_model_id, new_dir = storage.new_model_dir()
-        thickness.mesh_shell(stl_source, request.amount_mm, new_dir)
+        thickness.mesh_shell(stl_source, request.amount_mm, new_dir, quad_target_faces=request.quad_target_faces)
         storage.save_spec(new_model_id, {"parent_model_id": model_id, "method": "mesh_shell"})
         return ThickenResponse(
             model_id=new_model_id, method="mesh_shell", download_url=f"/models/{new_model_id}/download"
@@ -228,10 +228,13 @@ def thicken_existing_model(model_id: str, request: ThickenRequest) -> ThickenRes
 
 _UPLOAD_FILE = File(...)
 _AMOUNT_MM_FORM = Form(...)
+_QUAD_TARGET_FACES_FORM = Form(0, ge=0, le=1_000_000)
 
 
 @app.post("/thicken")
-async def thicken_uploaded_file(file: UploadFile = _UPLOAD_FILE, amount_mm: float = _AMOUNT_MM_FORM) -> FileResponse:
+async def thicken_uploaded_file(
+    file: UploadFile = _UPLOAD_FILE, amount_mm: float = _AMOUNT_MM_FORM, quad_target_faces: int = _QUAD_TARGET_FACES_FORM
+) -> FileResponse:
     """
     Increase the wall thickness of an arbitrary uploaded STL/OBJ file via
     mesh shelling, and return the thickened STL directly (one round trip:
@@ -249,7 +252,9 @@ async def thicken_uploaded_file(file: UploadFile = _UPLOAD_FILE, amount_mm: floa
         )
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in _ALLOWED_UPLOAD_SUFFIXES:
-        raise HTTPException(status_code=422, detail=f"unsupported file type '{suffix}'; expected .stl or .obj")
+        raise HTTPException(
+            status_code=422, detail=f"unsupported file type '{suffix}'; expected one of {sorted(_ALLOWED_UPLOAD_SUFFIXES)}"
+        )
 
     content = await file.read()
     if len(content) > settings.max_upload_bytes:
@@ -258,7 +263,7 @@ async def thicken_uploaded_file(file: UploadFile = _UPLOAD_FILE, amount_mm: floa
     upload_model_id, upload_path = storage.save_upload(file.filename or "model.stl", content)
     try:
         new_model_id, new_dir = storage.new_model_dir()
-        result_path = thickness.mesh_shell(upload_path, amount_mm, new_dir)
+        result_path = thickness.mesh_shell(upload_path, amount_mm, new_dir, quad_target_faces=quad_target_faces)
         storage.save_spec(new_model_id, {"parent_model_id": upload_model_id, "method": "mesh_shell"})
         return FileResponse(
             result_path,
@@ -365,6 +370,7 @@ def repair_model_holes(model_id: str, request: RepairRequest) -> RepairResponse:
             request.hole_ids,
             str(storage.model_dir(model_id) / "model.stl"),
             viewer_output=str(viewer_path),
+            quad_target_faces=request.quad_target_faces,
         )
     except WatertightError as exc:
         logger.error("Watertight repair failed for model_id=%s: %s", model_id, exc)

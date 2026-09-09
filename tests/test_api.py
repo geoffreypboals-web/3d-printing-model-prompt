@@ -216,7 +216,7 @@ def test_thicken_existing_model_without_source_falls_back_to_mesh_shell(monkeypa
     (path / "model.stl").write_bytes(b"solid fake\nendsolid fake\n")
     storage.save_spec(model_id, {"backend": "blender", "source_kind": "blender_bpy_script"})
 
-    def fake_mesh_shell(input_path, amount_mm, output_dir):
+    def fake_mesh_shell(input_path, amount_mm, output_dir, *, quad_target_faces=0):
         output_dir.mkdir(parents=True, exist_ok=True)
         result = output_dir / "model.stl"
         result.write_bytes(b"solid shelled\nendsolid shelled\n")
@@ -235,7 +235,7 @@ def test_thicken_missing_model_returns_404(client):
 
 
 def test_thicken_upload_golden_path(monkeypatch, client):
-    def fake_mesh_shell(input_path, amount_mm, output_dir):
+    def fake_mesh_shell(input_path, amount_mm, output_dir, *, quad_target_faces=0):
         output_dir.mkdir(parents=True, exist_ok=True)
         result = output_dir / "model.stl"
         result.write_bytes(b"solid shelled\nendsolid shelled\n")
@@ -363,7 +363,7 @@ def test_repair_model_golden_path(monkeypatch, client):
     )
     model_id = upload_resp.json()["model_id"]
 
-    def fake_repair_mesh(input_path, hole_ids, output_path, *, viewer_output=None):
+    def fake_repair_mesh(input_path, hole_ids, output_path, *, viewer_output=None, quad_target_faces=0):
         from pathlib import Path
 
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)

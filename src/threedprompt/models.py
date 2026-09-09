@@ -92,6 +92,16 @@ class ThickenRequest(BaseModel):
     """POST /models/{model_id}/thicken request body."""
 
     amount_mm: float = Field(..., gt=0, description="Amount, in millimeters, to increase wall thickness by.")
+    quad_target_faces: int = Field(
+        0,
+        ge=0,
+        le=1_000_000,
+        description="0 (default) disables. When > 0, retopologizes the result into roughly this many "
+        "quad-dominant faces via QuadriFlow after thickening -- mainly a topology/cosmetic pass (ignored "
+        "on the regenerate-from-source path, which has no mesh to retopologize). Pick a value proportional "
+        "to the mesh's real complexity: a target at or below its natural face count can leave it not "
+        "watertight even with the repair pass that runs afterward.",
+    )
 
 
 class ThickenResponse(BaseModel):
@@ -224,6 +234,15 @@ class RepairRequest(BaseModel):
     """POST /models/{model_id}/repair request body."""
 
     hole_ids: list[int] = Field(..., min_length=1, description="Hole ids (from a prior /analyze) to close.")
+    quad_target_faces: int = Field(
+        0,
+        ge=0,
+        le=1_000_000,
+        description="0 (default) disables. When > 0, retopologizes the repaired mesh into roughly this "
+        "many quad-dominant faces via QuadriFlow after hole-filling -- mainly a topology/cosmetic pass. "
+        "Pick a value proportional to the mesh's real complexity: a target at or below its natural face "
+        "count can leave it not watertight even with the repair pass that runs afterward.",
+    )
 
 
 class RepairResponse(BaseModel):

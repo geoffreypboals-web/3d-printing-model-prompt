@@ -67,10 +67,18 @@ def _parse_args():
         default=None,
         help="Optional .glb path for an updated web-viewer copy of the repaired mesh.",
     )
+    parser.add_argument(
+        "--quad-target-faces",
+        type=int,
+        default=0,
+        help="0 (default) disables. When > 0, retopologizes the repaired mesh into roughly this "
+        "many quad-dominant faces via QuadriFlow after hole-filling -- see _shared.quad_remesh's "
+        "docstring for why this isn't a hard watertightness guarantee at very low targets.",
+    )
     return parser.parse_args(argv)
 
 
-def close_holes(bpy, input_path: str, hole_ids: set[int], output_path: str) -> None:
+def close_holes(bpy, input_path: str, hole_ids: set[int], output_path: str, quad_target_faces: int = 0) -> None:
     """Cap the requested boundary loops in input_path and write the result to output_path."""
     import bmesh
 
@@ -110,6 +118,9 @@ def close_holes(bpy, input_path: str, hole_ids: set[int], output_path: str) -> N
     obj.data.update()
     bm.free()
 
+    if quad_target_faces > 0:
+        _shared.quad_remesh(bpy, obj, quad_target_faces)
+
     _shared.export_mesh(bpy, output_path)
 
 
@@ -133,7 +144,7 @@ def main():
         ) from exc
 
     try:
-        close_holes(bpy, args.input, hole_ids, args.output)
+        close_holes(bpy, args.input, hole_ids, args.output, quad_target_faces=args.quad_target_faces)
         report = analyze_watertight.analyze(bpy, args.output, viewer_output=args.viewer_output)
         report["closed_hole_ids"] = sorted(hole_ids)
         with open(args.report_output, "w", encoding="utf-8") as f:

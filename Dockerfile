@@ -24,10 +24,20 @@ FROM python:3.11-slim
 # thickness.py's STL-only Solidify path avoided needing this; watertight.py's
 # glTF viewer export does not), and the shared libraries headless Blender
 # needs at runtime even without a display (Mesa/X11 client libs).
+#
+# python3-pip is for rhino3dm (.3dm/Rhino import support, blender_scripts/
+# vendor/rhino3dm_reader/) -- confirmed live this needs installing against
+# Debian's own /usr/bin/python3, NOT the app's requirements.txt: the apt
+# `blender` package links that system interpreter (currently 3.13),
+# entirely separate from the `python:3.11-slim` base image's own
+# /usr/local/bin/python that `pip install -r requirements.txt` targets.
+# `pip3` on PATH resolves to the wrong (3.11) one -- always invoke pip via
+# `/usr/bin/python3 -m pip` for anything Blender's subprocess needs to see.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openscad \
     blender \
     python3-numpy \
+    python3-pip \
     libgl1 \
     libglu1-mesa \
     libxi6 \
@@ -35,7 +45,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxext6 \
     libxkbcommon0 \
     libsm6 \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && /usr/bin/python3 -m pip install --no-cache-dir --break-system-packages rhino3dm
 
 WORKDIR /app
 

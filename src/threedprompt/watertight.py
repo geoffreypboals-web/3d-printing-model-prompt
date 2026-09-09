@@ -60,7 +60,7 @@ _BLENDER_SCRIPTS_DIR = _HERE / "blender_scripts"
 _ANALYZE_SCRIPT = _BLENDER_SCRIPTS_DIR / "analyze_watertight.py"
 _CLOSE_HOLES_SCRIPT = _BLENDER_SCRIPTS_DIR / "close_holes.py"
 
-SUPPORTED_EXTENSIONS = {".stl", ".obj", ".ply", ".glb", ".gltf", ".fbx"}
+SUPPORTED_EXTENSIONS = {".stl", ".obj", ".ply", ".glb", ".gltf", ".fbx", ".3dm"}
 
 
 class WatertightError(RuntimeError):
@@ -201,7 +201,12 @@ def analyze_mesh(input_path: str, *, viewer_output: str | None = None) -> Watert
 
 
 def repair_mesh(
-    input_path: str, hole_ids: list[int], output_path: str, *, viewer_output: str | None = None
+    input_path: str,
+    hole_ids: list[int],
+    output_path: str,
+    *,
+    viewer_output: str | None = None,
+    quad_target_faces: int = 0,
 ) -> RepairResult:
     """
     Close the given hole ids (as reported by a prior analyze_mesh() call
@@ -210,6 +215,11 @@ def repair_mesh(
     If viewer_output is given (a .glb path), also writes an updated
     web-viewable copy of the repaired mesh there, in the same Blender
     invocation.
+
+    quad_target_faces (default 0 = disabled): when > 0, retopologizes the
+    repaired mesh into roughly this many quad-dominant faces via QuadriFlow
+    after hole-filling. Topology/cosmetic only -- doesn't affect
+    watertightness, and every STL export re-triangulates regardless.
 
     Raises WatertightError if Blender is missing, times out, a hole id
     doesn't exist on this file, or the output format is unsupported.
@@ -235,6 +245,8 @@ def repair_mesh(
         ]
         if viewer_output:
             script_args += ["--viewer-output", str(viewer_output)]
+        if quad_target_faces > 0:
+            script_args += ["--quad-target-faces", str(quad_target_faces)]
         proc = _run_blender_script(_CLOSE_HOLES_SCRIPT, script_args)
         report_dict = _read_json_report(report_json, proc)
 

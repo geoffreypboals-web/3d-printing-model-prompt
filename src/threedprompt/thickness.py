@@ -82,39 +82,29 @@ def regenerate_from_source(scad_path: Path, amount_mm: float, output_stl_path: P
     return new_value
 
 
+# __BLENDER_SCRIPTS_DIR__ is replaced (str.replace, not .format -- this
+# template already uses literal {{ }} braces in f-strings below, and
+# nesting a second format/f-string layer around that gets unreadable fast)
+# with blender_scripts/'s real absolute path by mesh_shell() below, so this
+# generated script can `import _shared` and reuse its import_mesh() (now
+# also handling .3dm) / export_mesh() / quad_remesh() instead of
+# duplicating that logic a second time here.
 _SOLIDIFY_SCRIPT_TEMPLATE = """\
 import bpy
 import sys
 
-def _import(input_path):
-    lowered = input_path.lower()
-    if lowered.endswith(".stl"):
-        if hasattr(bpy.ops.wm, "stl_import"):
-            bpy.ops.wm.stl_import(filepath=input_path)
-        else:
-            bpy.ops.import_mesh.stl(filepath=input_path)
-    elif lowered.endswith(".obj"):
-        if hasattr(bpy.ops.wm, "obj_import"):
-            bpy.ops.wm.obj_import(filepath=input_path)
-        else:
-            bpy.ops.import_scene.obj(filepath=input_path)
-    else:
-        raise RuntimeError(f"unsupported mesh format for {{input_path}}")
-
-def _export(output_path):
-    if hasattr(bpy.ops.wm, "stl_export"):
-        bpy.ops.wm.stl_export(filepath=output_path, export_selected_objects=True)
-    else:
-        bpy.ops.export_mesh.stl(filepath=output_path, use_selection=True)
+sys.path.insert(0, "__BLENDER_SCRIPTS_DIR__")
+import _shared
 
 if __name__ == "__main__":
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     input_path, output_path, thickness_mm = argv[0], argv[1], float(argv[2])
+    quad_target_faces = int(argv[3]) if len(argv) > 3 else 0
 
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=False)
 
-    _import(input_path)
+    _shared.import_mesh(bpy, input_path)
     mesh_objects = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
     if not mesh_objects:
         raise RuntimeError(f"no mesh objects found after importing {{input_path}}")
@@ -128,8 +118,18 @@ if __name__ == "__main__":
         modifier.use_quality_normals = True
         bpy.ops.object.modifier_apply(modifier=modifier.name)
 
+    if quad_target_faces > 0:
+        merged = bpy.context.view_layer.objects.active
+        if len(mesh_objects) > 1:
+            bpy.ops.object.select_all(action="DESELECT")
+            for obj in mesh_objects:
+                obj.select_set(True)
+            bpy.ops.object.join()
+            merged = bpy.context.view_layer.objects.active
+        _shared.quad_remesh(bpy, merged, quad_target_faces)
+
     bpy.ops.object.select_all(action="SELECT")
-    _export(output_path)
+    _shared.export_mesh(bpy, output_path)
 """
 
 
@@ -146,10 +146,20 @@ def _blender_binary_path() -> str:
     return resolved
 
 
-def mesh_shell(input_path: Path, amount_mm: float, output_dir: Path) -> Path:
+_BLENDER_SCRIPTS_DIR = Path(__file__).resolve().parent / "blender_scripts"
+
+
+def mesh_shell(input_path: Path, amount_mm: float, output_dir: Path, *, quad_target_faces: int = 0) -> Path:
     """
     Increase wall thickness of an arbitrary mesh file by applying a
     Blender Solidify modifier of amount_mm and re-exporting.
+
+    quad_target_faces (default 0 = disabled): when > 0, retopologizes the
+    result into roughly this many quad-dominant faces via QuadriFlow after
+    thickening. Mainly topology/cosmetic -- every STL export re-triangulates
+    regardless -- but see _shared.quad_remesh's docstring for why a target
+    at or below the mesh's natural face count isn't guaranteed watertight
+    even with the repair pass that runs right after it.
 
     Works regardless of how the mesh was originally produced. Raises
     ThicknessError on missing binary, unsupported format, or a Blender
@@ -162,7 +172,7 @@ def mesh_shell(input_path: Path, amount_mm: float, output_dir: Path) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     script_path = output_dir / "solidify.py"
     output_stl_path = output_dir / "model.stl"
-    script_path.write_text(_SOLIDIFY_SCRIPT_TEMPLATE)
+    script_path.write_text(_SOLIDIFY_SCRIPT_TEMPLATE.replace("__BLENDER_SCRIPTS_DIR__", str(_BLENDER_SCRIPTS_DIR)))
 
     binary = _blender_binary_path()
     result = subprocess.run(
@@ -175,6 +185,7 @@ def mesh_shell(input_path: Path, amount_mm: float, output_dir: Path) -> Path:
             str(input_path),
             str(output_stl_path),
             str(amount_mm),
+            str(quad_target_faces),
         ],
         capture_output=True,
         text=True,
