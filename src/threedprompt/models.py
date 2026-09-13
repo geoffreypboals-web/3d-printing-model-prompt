@@ -112,6 +112,162 @@ class ThickenResponse(BaseModel):
     download_url: str
 
 
+@dataclass(frozen=True)
+class MoldResult:
+    """
+    Output of mold.make_mold(). silicone_block mode populates the first
+    4 fields; direct_cast mode populates only direct_mold_bottom_stl/
+    direct_mold_top_stl; form_fitting mode populates only the
+    skin_pour_*/support_jacket_* fields; hollow_cast mode populates only
+    the hollow_cast_* fields. All fields not populated by the active mode
+    stay None.
+    repaired_hole_ids lists any watertight-defect holes auto-repaired
+    before generation (empty if the input was already watertight).
+    draft_check is the automatic non-blocking draft/undercut warning
+    (direct_cast only - None for silicone_block/form_fitting, or if the
+    check itself failed).
+    """
+
+    pour_box_bottom_stl: str | None = None
+    pour_box_top_stl: str | None = None
+    clamp_shell_bottom_stl: str | None = None
+    clamp_shell_top_stl: str | None = None
+    direct_mold_bottom_stl: str | None = None
+    direct_mold_top_stl: str | None = None
+    skin_pour_bottom_stl: str | None = None
+    skin_pour_top_stl: str | None = None
+    support_jacket_bottom_stl: str | None = None
+    support_jacket_top_stl: str | None = None
+    hollow_cast_bottom_stl: str | None = None
+    hollow_cast_top_stl: str | None = None
+    hollow_cast_core_stl: str | None = None
+    repaired_hole_ids: list[int] = field(default_factory=list)
+    draft_check: DraftReport | None = None
+    cavity_volume_cm3: float = 0.0
+    """The actual cast/pour material volume (FR-8); see docs/adr/0010-configurable-parting-axis-and-volume-reporting.md
+    for what "cavity" means per mode."""
+
+
+class MoldRequest(BaseModel):
+    """POST /models/{model_id}/mold request body."""
+
+    mode: Literal["silicone_block", "direct_cast", "form_fitting", "hollow_cast"] = Field(
+        "silicone_block",
+        description="silicone_block: pour-box + clamp-shell for casting the model in RTV silicone, then "
+        "plaster/cement in the silicone (4 output files). direct_cast: a single rigid two-part mold shaped "
+        "from the model's own geometry, for casting resin/urethane directly with no silicone step (2 output "
+        "files) -- only suitable for models with no undercuts along the Z axis. form_fitting: a thin, "
+        "contour-following silicone skin (grown outward from the model surface by shell_thickness_mm) plus a "
+        "rigid support jacket that holds the finished skin rigid for a final pour (4 output files) -- for "
+        "casting organic/detailed models where a rigid direct_cast mold couldn't release. hollow_cast: the "
+        "same rigid two-part outer mold as direct_cast, plus a separate solid core (the model's surface "
+        "shrunk inward by cast_wall_thickness_mm) that seats inside the cavity before pouring, so the cast "
+        "forms a hollow shell rather than a solid block (3 output files).",
+    )
+    clearance_mm: float = Field(
+        8.0,
+        gt=0,
+        description="(silicone_block only) Gap between the model surface and the pour-box cavity wall "
+        "(silicone thickness), in mm.",
+    )
+    pour_box_wall_mm: float = Field(
+        4.0, gt=0, description="(silicone_block only) Wall thickness of the rigid pour box, in mm."
+    )
+    key_diameter_mm: float = Field(
+        6.0,
+        gt=0,
+        description="(silicone_block only) Diameter of the hemispherical registration keys at the parting "
+        "line, in mm.",
+    )
+    sprue_diameter_mm: float = Field(
+        10.0, gt=0, description="Diameter of the pour hole through each top half's ceiling, in mm."
+    )
+    vent_diameter_mm: float = Field(
+        4.0, gt=0, description="Diameter of the air-vent hole through each top half's ceiling, in mm."
+    )
+    clamp_wall_mm: float = Field(
+        6.0, gt=0, description="(silicone_block only) Wall thickness of the rigid clamp shell, in mm."
+    )
+    clamp_flange_width_mm: float = Field(
+        12.0, gt=0, description="Width of the bolted flange around each mold's parting line, in mm."
+    )
+    bolt_hole_diameter_mm: float = Field(
+        4.5, gt=0, description="Diameter of the flange's bolt holes, in mm (4.5mm = M4 clearance)."
+    )
+    direct_mold_wall_mm: float = Field(
+        6.0,
+        gt=0,
+        description="(direct_cast, hollow_cast) Wall thickness of the rigid outer mold, in mm.",
+    )
+    shell_thickness_mm: float = Field(
+        3.0,
+        gt=0,
+        description="(form_fitting only) How far the model's surface is grown outward to form the silicone "
+        "skin's own cavity shape, in mm - this becomes the finished silicone shell's thickness.",
+    )
+    skin_pour_wall_mm: float = Field(
+        3.0, gt=0, description="(form_fitting only) Wall thickness of the rigid skin-pour tool, in mm."
+    )
+    support_jacket_wall_mm: float = Field(
+        5.0, gt=0, description="(form_fitting only) Wall thickness of the rigid support jacket, in mm."
+    )
+    cast_wall_thickness_mm: float = Field(
+        4.0,
+        gt=0,
+        description="(hollow_cast only) How far the core is shrunk inward from the model's own surface, in "
+        "mm - this becomes the finished cast's wall thickness.",
+    )
+    parting_axis: Literal["x", "y", "z"] = Field(
+        "z",
+        description="Which of the model's own axes the two halves split along. Non-'z' rotates the model "
+        "internally before building, and the exported STL parts stay in that rotated frame rather than "
+        "being rotated back to the original upload's orientation.",
+    )
+    parting_offset_mm: float = Field(
+        0.0,
+        description="Shift the parting plane this far from the model's own bounding-box midpoint along "
+        "parting_axis (positive moves it toward the max end) - for models whose natural widest "
+        "cross-section isn't at the geometric center. Must keep the plane strictly within the model's own "
+        "bounding box.",
+    )
+    material_density_g_per_cm3: float | None = Field(
+        None,
+        gt=0,
+        description="Optional casting material density, in g/cm3 (e.g. ~1.08 for platinum-cure silicone, "
+        "~1.1-1.2 for common casting resins). When given, the response also reports "
+        "estimated_cast_mass_g alongside cavity_volume_cm3.",
+    )
+
+
+class MoldResponse(BaseModel):
+    """POST /models/{model_id}/mold response body."""
+
+    model_id: str
+    download_url: str
+    repaired_hole_ids: list[int] = Field(
+        default_factory=list,
+        description="Watertight-defect hole ids auto-repaired before generation (empty if the input mesh "
+        "was already watertight). See POST /models/{model_id}/analyze for what each id refers to.",
+    )
+    draft_check: dict | None = Field(
+        None,
+        description="direct_cast mode only: {'releasable': bool, 'problem_island_count': int} from an "
+        "automatic, non-blocking draft-angle/undercut check. None for silicone_block, or if the check "
+        "itself failed. Call POST /models/{model_id}/mold/draft-check for full per-face detail.",
+    )
+    cavity_volume_cm3: float = Field(
+        0.0,
+        description="The actual cast/pour material volume, in cm3 (FR-8) - meaning differs slightly per "
+        "mode: silicone_block/direct_cast report the whole pour/cast volume; form_fitting/hollow_cast "
+        "subtract out the model's own volume first, since only the thin gap around it fills with material.",
+    )
+    estimated_cast_mass_g: float | None = Field(
+        None,
+        description="cavity_volume_cm3 * request.material_density_g_per_cm3, if that field was given. "
+        "None if no density was supplied.",
+    )
+
+
 class HealthResponse(BaseModel):
     """GET /health response body."""
 
@@ -261,3 +417,72 @@ class UploadResponse(BaseModel):
 
     model_id: str
     filename: str
+
+
+# --- Draft-angle / undercut analysis (FR-4) ---
+# A different geometric heuristic from watertight.py's hole detection, but
+# the same "deterministic geometry pass over the mesh, no LLM/ML" shape
+# (see hole_classifier.py / ADR 0004) and the same headless-Blender-
+# subprocess-then-parse-JSON pattern watertight.py already establishes.
+# See draft_analysis.py and docs/adr/0007-draft-undercut-analysis.md.
+
+
+@dataclass
+class ProblemFaceIsland:
+    """
+    A connected group of faces whose draft angle (relative to their
+    half's pull direction) falls below the requested threshold - either
+    a genuine undercut (won't release at all) or just an under-drafted
+    near-vertical wall (releases, but with more friction than the
+    threshold calls for).
+    """
+
+    id: int
+    face_indices: list[int]
+    centroid: tuple[float, float, float]
+    face_count: int
+    min_draft_angle_deg: float
+    classification: Literal["undercut", "insufficient_draft"]
+
+
+@dataclass
+class DraftReport:
+    """Full result of analyzing one mesh for draft-angle/undercut problems along a given pull axis."""
+
+    source_path: str
+    pull_axis: Literal["x", "y", "z"]
+    parting_coordinate: float
+    min_draft_angle_deg: float
+    releasable: bool
+    problem_islands: list[ProblemFaceIsland] = field(default_factory=list)
+    vertex_count: int = 0
+    face_count: int = 0
+    blender_version: str = ""
+
+
+class DraftCheckRequest(BaseModel):
+    """POST /models/{model_id}/mold/draft-check request body."""
+
+    pull_axis: Literal["x", "y", "z"] = Field(
+        "z", description="Axis the two mold halves are pulled apart along (matches make_mold.py's own convention)."
+    )
+    min_draft_angle_deg: float = Field(
+        2.0,
+        ge=0,
+        description="Faces drafted less than this (including negative = a genuine undercut) are flagged. "
+        "2-4 degrees is the commonly cited range for reliable rigid-mold release.",
+    )
+
+
+class DraftCheckResponse(BaseModel):
+    """POST /models/{model_id}/mold/draft-check response body."""
+
+    source_path: str
+    pull_axis: Literal["x", "y", "z"]
+    parting_coordinate: float
+    min_draft_angle_deg: float
+    releasable: bool
+    problem_islands: list[dict]
+    vertex_count: int
+    face_count: int
+    blender_version: str

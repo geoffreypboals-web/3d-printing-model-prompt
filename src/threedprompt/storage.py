@@ -6,7 +6,9 @@ Description: Local filesystem storage for generated models. Each model
     (model.scad or build.py) when kept, and a spec.json sidecar recording
     how it was made - so thickness.py can decide whether to regenerate
     from source or shell the mesh. Also implements the prompt -> model_id
-    cache required by rule 10 (don't pay for the same generation twice).
+    cache required by rule 10 (don't pay for the same generation twice),
+    and zips a model's mold.py output (four STL parts) into one
+    downloadable archive via make_zip().
 Inputs: settings.output_dir from config.py; GenerationResult objects from
     the generator backends.
 Outputs: Model directories/files on disk; spec dicts read back by the API
@@ -27,6 +29,7 @@ import hashlib
 import json
 import shutil
 import uuid
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -124,6 +127,16 @@ def remember_cached_model(prompt: str, wall_thickness_mm: float | None, model_id
     index: dict[str, str] = json.loads(index_path.read_text()) if index_path.is_file() else {}
     index[_cache_key(prompt, wall_thickness_mm)] = model_id
     index_path.write_text(json.dumps(index, indent=2))
+
+
+def make_zip(model_id: str, filenames: list[str], zip_name: str = "mold.zip") -> Path:
+    """Zip the given filenames (already inside this model_id's directory) into one archive, overwriting any existing."""
+    directory = model_dir(model_id)
+    zip_path = directory / zip_name
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for filename in filenames:
+            zf.write(directory / filename, arcname=filename)
+    return zip_path
 
 
 def copy_into_new_model(source_dir: Path, spec: dict[str, Any] | None = None) -> tuple[str, Path]:

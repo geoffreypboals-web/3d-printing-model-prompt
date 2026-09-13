@@ -1,10 +1,12 @@
 # 3D Printing Model Prompt
 
 Turns a natural-language description of a part into a 3D-printable STL file,
-can increase the wall thickness of an existing model, and can check a model
-for watertightness - finding surface gaps a slicer would choke on and
-telling deliberate openings (a cup's mouth, an open box top) apart from
-unintentional defects (a couple of misaligned vertices leaving a hole).
+can increase the wall thickness of an existing model, can check a model for
+watertightness - finding surface gaps a slicer would choke on and telling
+deliberate openings (a cup's mouth, an open box top) apart from unintentional
+defects (a couple of misaligned vertices leaving a hole) - and can generate a
+two-part silicone pour box plus a matching clamp shell for casting a model in
+RTV silicone and then plaster of paris or cement.
 Simple, mechanical parts (brackets, mounts, spacers, enclosures) are built
 with **[OpenSCAD](https://openscad.org/)**; complex, organic, or
 characterful shapes (creatures, figurines, freeform sculptures) are built
@@ -70,6 +72,203 @@ re-download the same result later via `GET /models/{model_id}/download`.
 Either way, thickening produces a *new* model rather than overwriting the
 original.
 
+## Mold generation
+
+`POST /models/{model_id}/mold` builds mold tooling around a model this
+service generated (or thickened/repaired), split at the model's own
+vertical midpoint. Four modes, chosen via `"mode"` (default
+`"silicone_block"`):
+
+**`silicone_block`** - a two-part silicone **pour box** (`pour_box_bottom.stl`
+/ `pour_box_top.stl`) and a matching two-part rigid **clamp shell**
+(`clamp_shell_bottom.stl` / `clamp_shell_top.stl`), 4 parts total:
+
+1. Print the pour box halves. Assemble them around the printed model (the
+   hemispherical registration keys near the parting line align the halves)
+   and pour RTV silicone in through the top half's sprue hole, using the
+   vent hole to let trapped air escape. Once cured and demolded, you have a
+   two-piece flexible silicone mold shaped like the model.
+2. Print the clamp shell halves. Reassemble the silicone mold's two pieces
+   and clamp the rigid shell around them using bolts (or zip ties) through
+   the flange holes - this is what keeps the flexible silicone from
+   bulging or leaking under the pressure of the next pour.
+3. Pour plaster of paris or cement into the clamp shell's own sprue hole,
+   which lines up with the silicone mold's cavity underneath it. Once
+   cured, unbolt the clamp shell and peel the silicone mold away.
+
+**`direct_cast`** - a single rigid two-part mold (`direct_mold_bottom.stl`
+/ `direct_mold_top.stl`, 2 parts) whose cavity is shaped like the model
+itself - no silicone step. Bolt the two printed halves together through
+the flange holes and pour resin, urethane, or foam straight into the
+sprue hole. Only suitable for a model with no undercuts along the Z axis
+(a rigid mold can't flex to release one the way silicone can), and v1
+ships with no draft angle or release tolerance - see
+`docs/adr/0006-direct-cast-mold-mode.md` for why those were deferred
+rather than guessed at.
+
+**`form_fitting`** - a thin, contour-following silicone **skin-pour tool**
+(`skin_pour_bottom.stl` / `skin_pour_top.stl`) and a matching rigid
+**support jacket** (`support_jacket_bottom.stl` / `support_jacket_top.stl`),
+4 parts total - for organic/detailed models a rigid `direct_cast` mold
+couldn't release along any single axis:
+
+1. Print the skin-pour tool halves and assemble them around the printed
+   model (registration keys align them, same as `silicone_block`'s pour
+   box). Pour RTV silicone through the sprue hole - since the tool's
+   cavity is the model's own surface grown outward by `shell_thickness_mm`,
+   this casts a thin silicone shell that exactly hugs the model's contours.
+2. Print the support jacket halves and bolt them around the finished
+   flexible shell through the flange holes - same role as
+   `silicone_block`'s clamp shell, holding the thin shell rigid.
+3. Pour plaster of paris or cement into the jacket's sprue hole.
+
+The offset is a per-vertex normal push, not a true Minkowski offset: flat
+or smoothly-curved regions of the model grow by exactly
+`shell_thickness_mm`, but sharp corners/edges come out thinner than
+requested - see `docs/adr/0008-form-fitting-thin-shell-mold.md`. Fine for
+the organic/rounded models this mode targets; not recommended for boxy
+models with sharp corners (use `direct_cast` or `silicone_block` there
+instead).
+
+**`hollow_cast`** - the same rigid outer mold as `direct_cast`
+(`hollow_cast_bottom.stl` / `hollow_cast_top.stl`) plus a separate solid
+**core** (`hollow_cast_core.stl`), 3 parts total - for casting a hollow
+vessel (a vase, a cup) as a genuine shell instead of a solid block:
+
+1. Print the outer mold halves and the core.
+2. Place the core inside the bottom half's cavity, then close the top
+   half - the core is the model's own surface shrunk inward by
+   `cast_wall_thickness_mm`, so a gap of exactly that thickness surrounds
+   it on every side.
+3. Bolt the halves together and pour resin, urethane, or plaster into the
+   sprue hole - it fills only that gap, forming a hollow shell rather
+   than a solid cast.
+
+Shares `direct_cast`'s no-draft/no-release-tolerance limitations, plus
+`form_fitting`'s offset-technique limitations (corner-rounding, concave
+self-intersection risk) applied inward instead of outward - see
+`docs/adr/0009-hollow-vessel-inner-core-mode.md`.
+
+`POST /mold` does the same for an arbitrary uploaded mesh, returning the
+resulting STL parts as one zip directly (one round trip, like
+`POST /thicken`). All dimensions are in millimeters and every parameter has
+a sensible default (see `MoldRequest` in `/docs`); the ones worth knowing
+about:
+
+- `clearance_mm` (default 8, `silicone_block` only) - gap between the
+  model surface and the pour box's cavity wall, i.e. how thick the cast
+  silicone will be.
+- `pour_box_wall_mm` / `clamp_wall_mm` (default 4 / 6, `silicone_block`
+  only) - rigid wall thickness of each part; the clamp shell is thicker by
+  default since it resists real hydraulic pressure, not just holding a
+  shape during a pour.
+- `direct_mold_wall_mm` (default 6, `direct_cast` and `hollow_cast`) -
+  rigid wall thickness of the outer mold.
+- `shell_thickness_mm` (default 3, `form_fitting` only) - how far the
+  model's surface is grown outward to form the cavity shape; this becomes
+  the finished silicone shell's own thickness.
+- `skin_pour_wall_mm` / `support_jacket_wall_mm` (default 3 / 5,
+  `form_fitting` only) - rigid wall thickness of each part, same
+  thinner-tool/thicker-jacket relationship as `silicone_block`.
+- `cast_wall_thickness_mm` (default 4, `hollow_cast` only) - how far the
+  core is shrunk inward from the model's own surface; this becomes the
+  finished cast's own wall thickness.
+- `clamp_flange_width_mm` / `bolt_hole_diameter_mm` (default 12 / 4.5,
+  `silicone_block`'s clamp shell, `direct_cast`, `form_fitting`'s support
+  jacket, and `hollow_cast`'s outer mold) - the bolted flange; 4.5mm is M4
+  clearance.
+- `sprue_diameter_mm` / `vent_diameter_mm` (default 10 / 4, all modes) -
+  the pour hole and its air-vent hole through each top half's ceiling.
+  The vent is placed over a real detected trapped-air pocket (the
+  cavity's own highest local surface peak) when the model has one,
+  falling back to a fixed offset from the cavity center for boxy models
+  with no such peak - see
+  `docs/adr/0011-geometry-aware-vent-placement.md`. Each hole diameter
+  must be smaller than the cavity's own footprint - a hole comparable to
+  (or larger than) the cavity itself would punch away the entire ceiling
+  instead of leaving a working pour hole, and is rejected with a clear
+  error rather than silently producing a broken mold; scale both down
+  for small models.
+- `parting_axis` (default `"z"`, all modes) - which model axis the two
+  halves split along (`"x"`, `"y"`, or `"z"`). A non-`z` axis is
+  implemented as a rotation baked into the model before building, so the
+  exported parts come out in that rotated frame, not the upload's
+  original orientation - see
+  `docs/adr/0010-configurable-parting-axis-and-volume-reporting.md`.
+- `parting_offset_mm` (default 0, all modes) - shifts the parting plane
+  this far from the model's own bounding-box midpoint along
+  `parting_axis` (positive moves it toward the max end); rejected if it
+  would push the split outside the model's own range.
+- `material_density_g_per_cm3` (optional, all modes) - when given,
+  `estimated_cast_mass_g` (JSON) / `X-Estimated-Cast-Mass-G` (upload
+  header) reports `cavity_volume_cm3 * material_density_g_per_cm3`.
+
+Before generating any mode, the input mesh is automatically checked for
+watertightness and repaired if needed: holes the existing watertight-check
+heuristic confidently calls likely defects (not likely-intentional
+openings) are closed automatically; anything left open fails the request
+with a clear error instead of handing Blender's boolean solver broken
+geometry (a rigid boolean cavity cut needs a genuinely closed mesh, and a
+broken one otherwise fails opaquely deep inside the Blender subprocess).
+Which hole ids (if any) were auto-repaired comes back as
+`repaired_hole_ids` in the JSON response for `POST /models/{model_id}/mold`,
+or the `X-Repaired-Hole-Ids` header for `POST /mold` - inspect them via
+`POST /models/{model_id}/analyze` if you want to know what was found.
+
+Every generation also reports the actual cast/pour material volume -
+`cavity_volume_cm3` in the JSON response, or `X-Cavity-Volume-Cm3` for
+`POST /mold` - and, if you pass `material_density_g_per_cm3`, an estimated
+mass (`estimated_cast_mass_g` / `X-Estimated-Cast-Mass-G`). What "cavity"
+means differs by mode - `silicone_block`'s pour-box cavity, `direct_cast`/
+`hollow_cast`'s own model volume (minus the core's, for `hollow_cast`),
+`form_fitting`'s thin shell gap - see
+`docs/adr/0010-configurable-parting-axis-and-volume-reporting.md`.
+
+`direct_cast` also runs an automatic, non-blocking draft-angle/undercut
+check after generating (a rigid mold can't flex around an undercut the
+way silicone can): `draft_check` in the JSON response, or the
+`X-Draft-Releasable` / `X-Draft-Problem-Island-Count` headers for
+`POST /mold`, tell you if anything was flagged without failing the
+request. For full per-face detail (or to check a `silicone_block` model,
+or try a different pull axis/threshold before committing to a full
+generation), call `POST /models/{model_id}/mold/draft-check` directly:
+
+```bash
+curl -X POST http://localhost:8000/models/<model_id>/mold/draft-check \
+  -H "Content-Type: application/json" \
+  -d '{"pull_axis": "z", "min_draft_angle_deg": 2.0}'
+```
+
+It reports `releasable` and a `problem_islands[]` list (each a connected
+group of faces, classified `"undercut"` - won't release at all - or
+`"insufficient_draft"` - releases, but with less clearance than
+requested), without modifying or generating anything. See
+`docs/adr/0007-draft-undercut-analysis.md` for how draft angle is
+measured and why each half's own pull direction is used rather than one
+global direction.
+
+See `docs/adr/0005-two-piece-silicone-mold-and-clamp-shell.md` for why the
+pour box uses registration keys while the clamp shell uses a bolted flange
+instead, and how the geometry was verified against a real Blender install.
+See `docs/adr/0006-direct-cast-mold-mode.md` for direct_cast's own design
+(model-mesh-as-cavity-tool, and why draft/tolerance/keys were skipped in
+v1), `docs/adr/0007-draft-undercut-analysis.md` for the draft-angle
+heuristic, `docs/adr/0008-form-fitting-thin-shell-mold.md` for
+form_fitting's offset-along-normals technique and its corner-rounding
+limitation, `docs/adr/0009-hollow-vessel-inner-core-mode.md` for how
+hollow_cast reuses that same offset technique inward with no new boolean
+step, `docs/adr/0010-configurable-parting-axis-and-volume-reporting.md`
+for the parting-axis rotation trick, `parting_offset_mm`'s validation, the
+per-mode casting-volume formulas, and a real `_add_pour_holes()` bug found
+and fixed while testing it (an oversized sprue/vent hole could silently
+punch away a mold's entire ceiling - now a rejected, clearly-named error),
+and `docs/adr/0011-geometry-aware-vent-placement.md` for how a trapped-air
+pocket is detected (and why a flat-topped box's corners don't falsely
+count as one). See `docs/mold-production-research-and-plan.md` for the
+research behind this feature (competitor tools, manual-technique guides)
+and what's deliberately out of scope (custom branding, a batch/grid tool,
+and any browser-UI work).
+
 ## Watertight check & repair
 
 Finds boundary-edge holes (surface gaps) and inverted-normal ("wrinkle")
@@ -115,6 +314,10 @@ LLM/ML call.
 | GET    | `/models/{model_id}/download` | Download the STL                                                        |
 | POST   | `/models/{model_id}/thicken`  | `{"amount_mm": 1.5}` -> JSON w/ new model_id (see above)                 |
 | POST   | `/thicken`                    | multipart upload (`file`, `amount_mm`) -> **the thickened STL file**     |
+| POST   | `/models/{model_id}/mold`     | Mold params incl. `mode` (all optional) -> JSON w/ new model_id, `download_url` for the zip |
+| GET    | `/models/{model_id}/mold.zip` | Download the generated mold STL parts as one zip                        |
+| POST   | `/mold`                       | multipart upload (`file`, mold params incl. `mode`) -> **the STL parts as one zip** |
+| POST   | `/models/{model_id}/mold/draft-check` | `{"pull_axis": "z", "min_draft_angle_deg": 2.0}` -> JSON draft/undercut report, no files |
 | POST   | `/watertight/upload`          | multipart upload (`file`) -> JSON w/ model_id                           |
 | POST   | `/models/{model_id}/analyze`  | Watertight check -> JSON report (holes, classifications, viewer URL)    |
 | POST   | `/models/{model_id}/repair`   | `{"hole_ids": [0, 2]}` -> closes those holes, re-checks, new download   |
@@ -143,6 +346,36 @@ curl -X POST http://localhost:8000/models/<model_id>/thicken \
 curl -X POST http://localhost:8000/thicken \
   -F "file=@my_model.stl" -F "amount_mm=1.5" \
   -o my_model_thickened.stl
+
+# same one-round-trip shape for mold generation - all params optional:
+curl -X POST http://localhost:8000/mold \
+  -F "file=@my_model.stl" -F "clearance_mm=8" \
+  -o my_model_mold.zip
+
+# direct-cast mode (no silicone step, 2 parts instead of 4):
+curl -X POST http://localhost:8000/mold \
+  -F "file=@my_model.stl" -F "mode=direct_cast" -F "direct_mold_wall_mm=6" \
+  -o my_model_direct_mold.zip
+
+# form-fitting mode (thin contour-hugging skin + support jacket, for
+# organic models a rigid direct_cast mold couldn't release):
+curl -X POST http://localhost:8000/mold \
+  -F "file=@my_model.stl" -F "mode=form_fitting" -F "shell_thickness_mm=3" \
+  -o my_model_form_fitting_mold.zip
+
+# hollow-cast mode (rigid outer mold + a core, for casting a hollow
+# vessel as a shell instead of a solid block):
+curl -X POST http://localhost:8000/mold \
+  -F "file=@my_model.stl" -F "mode=hollow_cast" -F "cast_wall_thickness_mm=4" \
+  -o my_model_hollow_cast_mold.zip
+
+# split along the model's own X axis instead of Z, offset 2mm toward the
+# max end, and estimate the cast's mass at 1.2 g/cm3 - X-Cavity-Volume-Cm3
+# and X-Estimated-Cast-Mass-G come back as response headers:
+curl -X POST http://localhost:8000/mold \
+  -F "file=@my_model.stl" -F "mode=direct_cast" \
+  -F "parting_axis=x" -F "parting_offset_mm=2" -F "material_density_g_per_cm3=1.2" \
+  -o my_model_direct_mold.zip
 ```
 
 ## Running with Docker (recommended)
@@ -252,5 +485,5 @@ as plain files with no database; there is no automated backup - see
 Early stage - not yet announced for outside contributions, so there's no
 `CONTRIBUTING.md` yet (rule 19). See `CHANGELOG.md` for what's shipped and
 `docs/adr/` for the reasoning behind the OpenSCAD/Blender split, the hybrid
-classifier, the wall-thickness strategy, and the watertight hole-detection/
-repair feature.
+classifier, the wall-thickness strategy, the watertight hole-detection/
+repair feature, and the mold-generation feature.
