@@ -30,16 +30,26 @@ result. Note this only applies to `POST /thicken` (arbitrary upload) -
 generated) still returns JSON with a `download_url`, since that endpoint
 is meant to chain with other calls that already deal in model_ids.
 
-## `GET /health` reports `openscad_available: false` or `blender_available: false`
+## `GET /health` reports `openscad_available: false`, `blender_available: false`, or `freecad_available: false`
 
 The binaries aren't on `PATH` inside the environment running the service.
+Unlike OpenSCAD/Blender, `freecad_available: false` does **not** degrade
+`GET /health`'s overall `status` - Blender remains the required fallback
+for wall-thickness shelling, so FreeCAD's absence only disables
+`/step/upload`, `/models/{id}/export-step`, and `/models/{id}/repair-solid`
+(each returns its own 503).
 
-- **Docker**: shouldn't happen - the Dockerfile installs both via `apt-get`.
-  If it does, rebuild with `docker build --no-cache -t threedprompt .`
+- **Docker**: shouldn't happen - the Dockerfile installs all three via
+  `apt-get`. If it does, rebuild with
+  `docker build --no-cache -t threedprompt .`
   (`/home/user/3d-printing-model-prompt/Dockerfile`).
-- **Local (no Docker)**: install OpenSCAD and Blender yourself, or set
-  `OPENSCAD_BINARY` / `BLENDER_BINARY` in `.env`
-  (`/home/user/3d-printing-model-prompt/.env.example`) to their full paths.
+- **Local (no Docker)**: install OpenSCAD/Blender/FreeCAD yourself, or set
+  `OPENSCAD_BINARY` / `BLENDER_BINARY` / `FREECAD_BINARY` in `.env`
+  (`/home/user/3d-printing-model-prompt/.env.example`) to their full
+  paths. FreeCAD's apt package (`freecad-python3`) installs its headless
+  CLI as `/usr/bin/freecadcmd`, not `/usr/bin/freecad` - that name is the
+  full `freecad` GUI package, which this project deliberately doesn't
+  install (much larger, and the headless CLI is all this service needs).
 
 ## `GET /health` reports `llm_reachable: false`
 
@@ -160,6 +170,85 @@ convert every point/bbox from the API before placing it in the scene - if
 a future change adds a new place that consumes `hole.centroid`,
 `island.centroid`, or `bounding_box` from the API, route it through those
 same helpers first.
+
+## `POST /models/{id}/export-step` or `/step/upload` fails with "Null input shape" / an OCCError
+
+**If it happens on export** (mesh -> STEP): the source mesh probably
+isn't a closed/manifold solid once loaded into FreeCAD - try
+`/models/{id}/repair-solid` first, or fall back to a Blender-repaired
+mesh via `/repair`, then retry the export.
+
+**If it happens on import** (STEP -> mesh) and you're looking at a STEP
+file produced by something other than this service's own
+`/models/{id}/export-step`: check the file actually has a
+`MANIFOLD_SOLID_BREP` entity in its `DATA;` section (open it as text - it's
+plain ASCII). A real, non-empty solid export from FreeCAD/OCCT-based
+tools always has one; a file with only header/placement entities and no
+geometry will always fail to import, and that's a defect in how the file
+was produced, not in this service's importer. This was a real bug found
+during development: `Part.export([shape], path)` (the module-level
+function, given a bare `Part.Shape`/`Solid` rather than a document
+object) silently writes a STEP file missing all solid geometry - fixed by
+switching to `shape.exportStep(path)` (the shape's own method) in
+`freecad_scripts/step_export.py`. If you ever add a second STEP-export
+call site, use `.exportStep()`, not `Part.export()`.
+
+## FreeCAD subprocess calls always report exit code 0, even on failure
+
+Not a bug - confirmed behavior of FreeCADCmd 1.0.0 (Debian's
+`freecad-python3` package): the process exit code stays 0 regardless of
+whether the script inside actually succeeded. `freecad_cad.py` never
+trusts the exit code - it judges success purely by whether the script's
+`--report` JSON file exists and has `"ok": true` (same pattern
+`watertight.py` already uses for Blender's own less-reliable-than-you'd-
+hope exit codes). If you add a new FreeCAD script, follow the same
+pattern: write a JSON report, don't rely on `sys.exit()`/return code.
+
+FreeCADCmd also prints an unrelated Python traceback to stderr on every
+invocation, complaining it failed to auto-open one of the script's own
+`--input`/`--output`/`--report` argument values as a FreeCAD document.
+This is cosmetic - confirmed harmless, the actual script still runs to
+completion regardless - and shows up in logs at `warning` level only
+when the (irrelevant) exit code is nonzero; otherwise it's silent.
+
+## A new FreeCAD script's `--input`/`--output` args come back wrong or missing
+
+FreeCADCmd, unlike Blender, does **not** strip its own arguments before
+handing off to the script - `sys.argv` inside a script invoked as
+`freecadcmd script.py -- --input X --output Y` is still
+`[freecadcmd_path, script_path, "--", "--input", "X", ...]`, not just
+`["--input", "X", ...]` the way Blender's `--python script.py --`
+convention leaves it. Every script under `freecad_scripts/` goes through
+`_shared.parse_freecad_args()`, which slices past the literal `--`
+itself before handing off to `argparse` - always route a new script's
+argument parsing through that helper rather than reading `sys.argv`
+directly.
+
+## `POST /thumbnail` returns 422 for a `.3mf` or `.amf` file
+
+Both are deliberately unsupported by this endpoint, not a bug.
+`.3mf` files carry their own embedded slicer-preview PNG - extract that
+directly (the farm-manager sibling repo's `libraryAssets.ts` already
+does) rather than paying for a fresh Blender render of a re-triangulated
+mesh. `.amf` has no importer in either Blender or FreeCAD's Mesh module,
+so there's no path to a thumbnail for it at all today.
+
+## `POST /thumbnail` on a `.step`/`.stp` file returns 503 even though `blender_available: true`
+
+STEP thumbnails go through **both** backends: FreeCAD converts the file
+to a mesh first (`freecad_cad.step_to_mesh()`), then Blender renders that
+mesh. Check `GET /health`'s `freecad_available` field too - a STEP
+thumbnail fails if either binary is missing, not just Blender.
+
+## A thumbnail renders as a flat gray silhouette with no shading definition
+
+Expected, not a bug - `render_thumbnail.py` uses Workbench's `'MATERIAL'`
+color mode, which falls back to Blender's default gray when the mesh has
+no material (most bare STL/STEP input). An OBJ with a `.mtl` beside it
+picks up real colors instead. If you want every thumbnail to render
+identically regardless of material, that's `'SINGLE'` color mode - not
+currently exposed as an option, would need a new `--color-mode` arg on
+the script if a caller wants it.
 
 ## Backups & data durability
 

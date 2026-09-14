@@ -15,9 +15,11 @@ Troubleshooting:
       and, for Ollama, that OLLAMA_HOST is reachable from inside the
       container (use the Docker service name, not "localhost", when
       running via docker-compose).
-    - If OpenSCAD/Blender generation fails with "binary not found", check
-      OPENSCAD_BINARY / BLENDER_BINARY match what's actually on PATH
-      inside the container (see the Dockerfile).
+    - If OpenSCAD/Blender/FreeCAD generation fails with "binary not
+      found", check OPENSCAD_BINARY / BLENDER_BINARY / FREECAD_BINARY
+      match what's actually on PATH inside the container (see the
+      Dockerfile) - FreeCAD's apt package installs its headless CLI as
+      /usr/bin/freecadcmd, not /usr/bin/freecad.
 """
 
 from __future__ import annotations
@@ -82,6 +84,7 @@ class Settings:
     # --- External CAD tool binaries ---
     openscad_binary: str = field(default_factory=lambda: os.environ.get("OPENSCAD_BINARY", "openscad"))
     blender_binary: str = field(default_factory=lambda: os.environ.get("BLENDER_BINARY", "blender"))
+    freecad_binary: str = field(default_factory=lambda: os.environ.get("FREECAD_BINARY", "freecadcmd"))
     cad_subprocess_timeout_seconds: int = field(default_factory=lambda: _env_int("CAD_SUBPROCESS_TIMEOUT_SECONDS", 180))
 
     # --- Storage ---
@@ -91,6 +94,7 @@ class Settings:
     max_prompt_length: int = field(default_factory=lambda: _env_int("MAX_PROMPT_LENGTH", 2000))
     max_upload_bytes: int = field(default_factory=lambda: _env_int("MAX_UPLOAD_BYTES", 300 * 1024 * 1024))
     max_wall_thickness_mm: float = field(default_factory=lambda: _env_float("MAX_WALL_THICKNESS_MM", 20.0))
+    thumbnail_max_size_px: int = field(default_factory=lambda: _env_int("THUMBNAIL_MAX_SIZE_PX", 2048))
 
     # --- Server ---
     host: str = field(default_factory=lambda: os.environ.get("HOST", "0.0.0.0"))

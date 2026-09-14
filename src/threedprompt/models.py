@@ -112,12 +112,32 @@ class ThickenResponse(BaseModel):
     download_url: str
 
 
+class TagSuggestRequest(BaseModel):
+    """POST /tags/suggest request body."""
+
+    file_name: str = Field(..., min_length=1, description="The model file's name, e.g. 'dragon_articulated_v2.stl'.")
+    designer_name: str | None = Field(default=None, description="Designer/creator name, if known.")
+    extension: str | None = Field(default=None, description="File extension, e.g. '.stl'.")
+    existing_tags: list[str] = Field(
+        default_factory=list, description="Tags already applied, so suggestions don't just repeat them."
+    )
+    colors: list[str] = Field(default_factory=list, description="Filament colors from slicer metadata, if known.")
+
+
+class TagSuggestResponse(BaseModel):
+    """POST /tags/suggest response body."""
+
+    tags: list[str]
+    method: Literal["llm", "heuristic_fallback"]
+
+
 class HealthResponse(BaseModel):
     """GET /health response body."""
 
     status: Literal["ok", "degraded"]
     openscad_available: bool
     blender_available: bool
+    freecad_available: bool
     llm_provider: str
     llm_reachable: bool
 
@@ -257,7 +277,22 @@ class RepairResponse(BaseModel):
 
 
 class UploadResponse(BaseModel):
-    """POST /watertight/upload response body."""
+    """POST /watertight/upload and POST /step/upload response body."""
 
     model_id: str
     filename: str
+
+
+# --- FreeCAD-backed features: STEP conversion & solid healing ---
+# Added alongside thickness.py's FreeCAD-first mesh-shell path - see
+# docs/adr/0005-freecad-third-cad-backend.md.
+
+
+class RepairSolidResponse(BaseModel):
+    """POST /models/{model_id}/repair-solid response body."""
+
+    model_id: str
+    fixed: bool
+    valid_before: bool
+    valid_after: bool
+    download_url: str

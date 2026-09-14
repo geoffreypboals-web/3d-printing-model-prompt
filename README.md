@@ -9,8 +9,15 @@ Simple, mechanical parts (brackets, mounts, spacers, enclosures) are built
 with **[OpenSCAD](https://openscad.org/)**; complex, organic, or
 characterful shapes (creatures, figurines, freeform sculptures) are built
 with **[Blender](https://www.blender.org/)** running headless, which also
-powers wall-thickness shelling and watertight analysis/repair. An HTTP API
-in front decides which backend to use per request.
+powers watertight analysis/repair and remains the default/fallback for
+wall-thickness shelling. **[FreeCAD](https://www.freecad.org/)** running
+headless is a third backend, tried first for `.stl` wall-thickness
+shelling (a real solid B-rep result via Part Thickness, not just a
+thicker mesh) and for two capabilities Blender can't do at all: STEP
+import/export and solid healing (OCCT's ShapeFix) - see
+[STEP conversion & solid healing](#step-conversion--solid-healing) below
+and `docs/adr/0005-freecad-third-cad-backend.md`. An HTTP API in front
+decides which backend to use per request.
 
 **Browser UI**: once the service is running, open `http://localhost:8000/`
 in a browser for a simple page to generate a model from a prompt, pick a
@@ -54,9 +61,12 @@ this service generated, in millimeters:
   `wall_thickness` variable, that variable is bumped and the part is
   **re-rendered from source** - the cleanest result, still fully parametric,
   no LLM call.
-- Otherwise (a Blender-sourced model, or the source-based approach fails),
-  the mesh is loaded into headless Blender and a **Solidify modifier** shells
-  it by the requested amount.
+- Otherwise, for `.stl` input, headless **FreeCAD's Part Thickness**
+  operation is tried first, giving a real solid B-rep result rather than
+  a thicker mesh - falling back automatically to Blender's **Solidify
+  modifier** if FreeCAD is unavailable or the input isn't solid/manifold
+  enough for Part Thickness. Every other mesh format goes straight to
+  Blender. See `docs/adr/0005-freecad-third-cad-backend.md`.
 
 `POST /thicken` does the same mesh-shelling for an arbitrary uploaded
 STL/OBJ file that this service didn't generate - useful for any file you
@@ -106,11 +116,69 @@ See `docs/adr/0004-watertight-hole-detection-and-repair.md` for how the
 classification heuristic works and why it's a heuristic rather than an
 LLM/ML call.
 
+## STEP conversion & solid healing
+
+Two FreeCAD-backed capabilities Blender can't provide at all:
+
+1. **STEP import/export** - `POST /step/upload` (multipart, `.step`/`.stp`)
+   converts an uploaded STEP solid into this service's mesh pipeline
+   (returns a `model_id` usable with every other endpoint);
+   `POST /models/{model_id}/export-step` converts a model's mesh back into
+   a STEP solid and returns the file directly. This is a best-effort B-rep
+   wrap of mesh triangles, not true reverse-engineered parametric CAD - a
+   flat face becomes one real STEP planar face, but there's no
+   curve/fillet recovery.
+2. **Solid healing** - `POST /models/{model_id}/repair-solid` runs OCCT's
+   ShapeFix to repair malformed B-rep topology (small gaps, invalid
+   edges/faces), overwriting the model's STL in place. This is a
+   **different class of repair** than `/repair` above: watertight repair
+   closes genuine missing patches in a mesh (an open boundary loop);
+   solid healing fixes a shape that's already "closed-looking" but
+   geometrically malformed (e.g. after a rough mesh-to-solid conversion or
+   a messy STEP import). Use `/repair` for a mesh with an actual hole,
+   `/repair-solid` for a solid that fails validity checks despite looking
+   closed.
+
+Both require FreeCAD (`freecad_available` in `GET /health`) - unlike
+Blender, FreeCAD isn't required for the service overall, so these two
+endpoints return `503` if it's unavailable while everything else keeps
+working. See `docs/adr/0005-freecad-third-cad-backend.md` for the real
+semantic limitations found integrating FreeCAD (STEP import only works
+via one specific API call; `Part.export()` on a bare shape silently omits
+all geometry; Part Thickness needs an "opening" face, unlike Solidify).
+
+## Thumbnails
+
+`POST /thumbnail` renders a square PNG thumbnail of an uploaded mesh or
+STEP file via headless Blender - an auto-framed orthographic camera and
+flat Workbench-engine shading, fast enough to run per file on demand
+rather than needing a pre-baked render pipeline. STEP/STP input is
+converted to a mesh via FreeCAD first (Blender has no STEP importer).
+`.3mf` isn't handled here on purpose - extract its embedded slicer-preview
+PNG instead, which is cheaper and more accurate than a fresh render of a
+re-triangulated mesh; `.amf` has no importer anywhere in this pipeline
+either. Returns the PNG directly, one round trip, the same shape as
+`POST /thicken`. Built primarily for a caller with no CAD tooling of its
+own - see the farm-manager sibling repo's Library feature.
+
+## AI tag suggestions
+
+`POST /tags/suggest` suggests short descriptive tags for a library file
+from its filename, designer name, and any known slicer metadata (filament
+colors), via the configured LLM backend (Ollama-first, see "AI/LLM
+backend" below) - text-only reasoning, not a vision model inspecting the
+actual geometry, so treat suggestions as a rough starting point for human
+review rather than authoritative. Never fails outright: if the LLM is
+unreachable or returns something unparseable, it falls back to
+filename-derived heuristic tags and reports `"method": "heuristic_fallback"`
+in the response so a caller can tell the two apart. Built for the same
+farm-manager sibling repo's Library feature as `/thumbnail` above.
+
 ## API
 
 | Method | Path                          | Description                                                          |
 |--------|-------------------------------|------------------------------------------------------------------------|
-| GET    | `/health`                     | Reports OpenSCAD/Blender/LLM availability                              |
+| GET    | `/health`                     | Reports OpenSCAD/Blender/FreeCAD/LLM availability                       |
 | POST   | `/generate`                   | `{"prompt": "...", "wall_thickness_mm": 3.0}` -> JSON w/ model_id       |
 | GET    | `/models/{model_id}/download` | Download the STL                                                        |
 | POST   | `/models/{model_id}/thicken`  | `{"amount_mm": 1.5}` -> JSON w/ new model_id (see above)                 |
@@ -119,6 +187,11 @@ LLM/ML call.
 | POST   | `/models/{model_id}/analyze`  | Watertight check -> JSON report (holes, classifications, viewer URL)    |
 | POST   | `/models/{model_id}/repair`   | `{"hole_ids": [0, 2]}` -> closes those holes, re-checks, new download   |
 | GET    | `/models/{model_id}/viewer.glb` | Web-viewable GLB preview (produced by a prior analyze/repair call)   |
+| POST   | `/step/upload`                | multipart upload (`file`, `.step`/`.stp`) -> JSON w/ model_id (mesh)    |
+| POST   | `/models/{model_id}/export-step` | Converts the model's mesh to STEP -> **the STEP file**               |
+| POST   | `/models/{model_id}/repair-solid` | Heals B-rep topology via FreeCAD ShapeFix -> JSON, overwrites in place |
+| POST   | `/thumbnail`                  | multipart upload (`file`, `size`) -> **a PNG thumbnail**                |
+| POST   | `/tags/suggest`               | `{"file_name": "...", ...}` -> JSON w/ suggested tags + method          |
 
 Interactive docs are auto-generated by FastAPI at `/docs` once the service
 is running - `/thicken` shows up there with a file-picker and an
@@ -147,9 +220,9 @@ curl -X POST http://localhost:8000/thicken \
 
 ## Running with Docker (recommended)
 
-The project is Docker-first (CLAUDE.md rule 4) - OpenSCAD and Blender are
-installed inside the image, so there's nothing to set up on the host besides
-Docker itself.
+The project is Docker-first (CLAUDE.md rule 4) - OpenSCAD, Blender, and
+FreeCAD are installed inside the image, so there's nothing to set up on
+the host besides Docker itself.
 
 ```bash
 cd /home/user/3d-printing-model-prompt
@@ -190,7 +263,11 @@ docker run --rm -p 8000:8000 --env-file .env -v threedprompt_output:/app/output 
 ## Running locally without Docker
 
 Requires OpenSCAD and Blender installed and on `PATH` (or point
-`OPENSCAD_BINARY` / `BLENDER_BINARY` at their full paths).
+`OPENSCAD_BINARY` / `BLENDER_BINARY` at their full paths). FreeCAD
+(`freecadcmd`) is optional - without it, `.stl` thickening falls back to
+Blender automatically and `/step/upload`, `/models/{id}/export-step`,
+`/models/{id}/repair-solid` return 503; point `FREECAD_BINARY` at its
+full path if it isn't on `PATH`.
 
 ```bash
 cd /home/user/3d-printing-model-prompt
@@ -230,14 +307,16 @@ This project is intended to be open source (CLAUDE.md rule 7), MIT licensed
 | three.js r0.160.0 (vendored, `src/threedprompt/static/vendor/three/`) | MIT | watertight viewer; vendored not CDN-loaded, per rule 4 |
 | OpenSCAD | GPL-2.0 | invoked as an external CLI process (subprocess), not linked into this codebase - GPL applies to OpenSCAD itself, not to this project |
 | Blender | GPL-3.0 | same: invoked as an external headless process, not linked in |
+| FreeCAD | LGPL-2.1 | same: invoked as an external headless process (`freecadcmd`), not linked in - LGPL is weak copyleft and, unlike OpenSCAD/Blender's GPL, wouldn't impose source-disclosure obligations even if linked directly |
 
-**Flagging per rule 7:** OpenSCAD and Blender are themselves GPL-licensed.
-This project only *shells out* to their CLI/headless executables (no linking,
-no bundling of their source into this codebase), which does not impose GPL
-obligations on this project's own code - but if you redistribute the Docker
-image itself (which bundles the OpenSCAD and Blender binaries), you're
-redistributing GPL software and should keep their license notices intact.
-Confirm this arrangement is acceptable before distributing built images.
+**Flagging per rule 7:** OpenSCAD and Blender are themselves GPL-licensed
+(FreeCAD is LGPL-2.1, more permissive). This project only *shells out* to
+their CLI/headless executables (no linking, no bundling of their source
+into this codebase), which does not impose GPL obligations on this
+project's own code - but if you redistribute the Docker image itself
+(which bundles all three binaries), you're redistributing GPL/LGPL
+software and should keep their license notices intact. Confirm this
+arrangement is acceptable before distributing built images.
 
 ## Data privacy & backups
 

@@ -25,6 +25,21 @@ Troubleshooting:
       positional and only valid for the exact file state a prior
       /analyze reported on - re-run /analyze if the model changed
       (closing holes itself renumbers whatever's left).
+    - 503 from /step/upload, /models/{id}/export-step, or
+      /models/{id}/repair-solid means FreeCAD is unavailable or failed -
+      check GET /health's freecad_available field first (unlike
+      OpenSCAD/Blender, FreeCAD isn't required for the service overall -
+      thickening still works via Blender without it, only the
+      FreeCAD-specific endpoints fail).
+    - 503 from /thumbnail on a .step/.stp upload specifically can mean
+      either Blender or FreeCAD is unavailable - STEP thumbnails go
+      through both (FreeCAD converts to a mesh first, Blender renders it).
+    - /tags/suggest never 503s - if the LLM is unreachable or its response
+      is unparseable, it falls back to filename-derived heuristic tags and
+      reports method="heuristic_fallback" (check GET /health's llm field
+      to tell "unreachable" apart from "reachable but replied
+      unparseable"). See tag_suggester.py's header for the text-only vs.
+      vision-based tagging tradeoff.
     - Run locally with: uvicorn threedprompt.main:app --reload
       (see README.md at /home/user/3d-printing-model-prompt/README.md
       for the full command including PYTHONPATH setup).
@@ -39,10 +54,20 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from threedprompt import blender_generator, openscad_generator, storage, thickness, watertight
+from threedprompt import (
+    blender_generator,
+    freecad_cad,
+    openscad_generator,
+    storage,
+    tag_suggester,
+    thickness,
+    thumbnail,
+    watertight,
+)
 from threedprompt.blender_generator import BlenderGenerationError
 from threedprompt.classifier import classify_prompt
 from threedprompt.config import settings
+from threedprompt.freecad_cad import FreeCADCADError
 from threedprompt.llm_client import LLMError, get_llm_client
 from threedprompt.logging_config import configure_logging, get_logger
 from threedprompt.models import (
@@ -56,6 +81,9 @@ from threedprompt.models import (
     Hole,
     RepairRequest,
     RepairResponse,
+    RepairSolidResponse,
+    TagSuggestRequest,
+    TagSuggestResponse,
     ThickenRequest,
     ThickenResponse,
     UploadResponse,
@@ -78,17 +106,24 @@ def health() -> HealthResponse:
     """Report availability of each external dependency (OpenSCAD, Blender, the LLM backend)."""
     openscad_available = shutil.which(settings.openscad_binary) is not None
     blender_available = shutil.which(settings.blender_binary) is not None
+    freecad_available = shutil.which(settings.freecad_binary) is not None
     llm_reachable = False
     try:
         llm_reachable = get_llm_client().is_reachable()
     except LLMError as exc:
         logger.warning("LLM client unavailable during health check: %s", exc)
 
+    # freecad_available deliberately doesn't gate "ok" vs "degraded" -
+    # Blender remains the required, always-available fallback for
+    # thickening (thickness.py's mesh_shell()); FreeCAD's absence only
+    # disables the FreeCAD-specific endpoints (STEP conversion, solid
+    # healing), which report their own 503s if called without it.
     status = "ok" if (openscad_available and blender_available and llm_reachable) else "degraded"
     return HealthResponse(
         status=status,
         openscad_available=openscad_available,
         blender_available=blender_available,
+        freecad_available=freecad_available,
         llm_provider=settings.llm_provider,
         llm_reachable=llm_reachable,
     )
@@ -395,6 +430,133 @@ def download_viewer_glb(model_id: str) -> FileResponse:
             status_code=404, detail="No viewer preview yet - call POST /models/{model_id}/analyze first"
         )
     return FileResponse(path, media_type="model/gltf-binary")
+
+
+_STEP_UPLOAD_SUFFIXES = {".step", ".stp"}
+
+
+@app.post("/step/upload", response_model=UploadResponse)
+async def upload_step_file(file: UploadFile = _UPLOAD_FILE) -> UploadResponse:
+    """
+    Upload a STEP file and convert it to a mesh (model.stl) via FreeCAD,
+    so it can be downloaded, thickened, or analyzed the same way as any
+    other model. Returns the *converted* model_id, not the raw upload's.
+    """
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in _STEP_UPLOAD_SUFFIXES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unsupported file type {suffix!r}; expected one of {sorted(_STEP_UPLOAD_SUFFIXES)}",
+        )
+    content = await file.read()
+    if len(content) > settings.max_upload_bytes:
+        raise HTTPException(status_code=413, detail=f"upload exceeds MAX_UPLOAD_BYTES ({settings.max_upload_bytes})")
+
+    raw_model_id, raw_path = storage.save_upload(file.filename or "model.step", content)
+    try:
+        model_id, model_directory = storage.new_model_dir()
+        freecad_cad.step_to_mesh(raw_path, model_directory / "model.stl")
+        storage.save_spec(model_id, {"parent_model_id": raw_model_id, "method": "step_import"})
+    except FreeCADCADError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return UploadResponse(model_id=model_id, filename=file.filename or "model.step")
+
+
+@app.post("/models/{model_id}/export-step")
+def export_model_as_step(model_id: str) -> FileResponse:
+    """
+    Convert a model's mesh into a STEP solid and return it (a
+    best-effort B-rep wrap of the mesh's triangles, not true
+    reverse-engineered parametric CAD - see freecad_cad.mesh_to_step()'s
+    docstring).
+    """
+    try:
+        source_path = storage.stl_path(model_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    step_path = storage.model_dir(model_id) / "model.step"
+    try:
+        freecad_cad.mesh_to_step(source_path, step_path)
+    except FreeCADCADError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return FileResponse(step_path, media_type="model/step", filename=f"{model_id}.step")
+
+
+@app.post("/models/{model_id}/repair-solid", response_model=RepairSolidResponse)
+def repair_model_solid(model_id: str) -> RepairSolidResponse:
+    """
+    Heal malformed B-rep topology via FreeCAD's ShapeFix (a different
+    class of repair than /repair's Blender-based open-boundary hole
+    filling - see freecad_cad.heal_solid()'s docstring). Overwrites this
+    model_id's STL in place, matching /repair's "correction, not a
+    variant" convention.
+    """
+    try:
+        source_path = storage.stl_path(model_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    try:
+        result = freecad_cad.heal_solid(source_path, source_path)
+    except FreeCADCADError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return RepairSolidResponse(
+        model_id=model_id,
+        fixed=result["fixed"],
+        valid_before=result["valid_before"],
+        valid_after=result["valid_after"],
+        download_url=f"/models/{model_id}/download",
+    )
+
+
+_THUMBNAIL_SIZE_FORM = Form(thumbnail.DEFAULT_SIZE_PX, ge=thumbnail.MIN_SIZE_PX)
+
+
+@app.post("/thumbnail")
+async def render_thumbnail(file: UploadFile = _UPLOAD_FILE, size: int = _THUMBNAIL_SIZE_FORM) -> FileResponse:
+    """
+    Render a PNG thumbnail of an uploaded mesh or STEP file via headless
+    Blender (STEP first converted to a mesh via FreeCAD), returning the
+    image directly - one round trip, mirroring /thicken's shape. Intended
+    for a caller like the farm-manager sibling repo's library scanner,
+    which has no CAD tooling of its own.
+    """
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in thumbnail.SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unsupported file type {suffix!r}; expected one of {sorted(thumbnail.SUPPORTED_EXTENSIONS)}",
+        )
+    if size > settings.thumbnail_max_size_px:
+        raise HTTPException(
+            status_code=422, detail=f"size exceeds THUMBNAIL_MAX_SIZE_PX ({settings.thumbnail_max_size_px})"
+        )
+    content = await file.read()
+    if len(content) > settings.max_upload_bytes:
+        raise HTTPException(status_code=413, detail=f"upload exceeds MAX_UPLOAD_BYTES ({settings.max_upload_bytes})")
+
+    upload_model_id, upload_path = storage.save_upload(file.filename or "model.stl", content)
+    try:
+        png_path = storage.model_dir(upload_model_id) / "thumbnail.png"
+        thumbnail.render_mesh_thumbnail(upload_path, png_path, size=size)
+    except thumbnail.ThumbnailError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return FileResponse(png_path, media_type="image/png", filename=f"{upload_model_id}.png")
+
+
+@app.post("/tags/suggest", response_model=TagSuggestResponse)
+def suggest_tags(request: TagSuggestRequest) -> TagSuggestResponse:
+    """
+    Suggest descriptive tags for a library file from its name/metadata via
+    the configured LLM backend (Ollama-first). Text-only reasoning, not
+    vision -- see tag_suggester.py's header for the upgrade path. Never
+    fails: falls back to filename-derived heuristic tags (method field
+    reports which path was used) rather than returning an error.
+    """
+    tags, method = tag_suggester.suggest_tags(request)
+    return TagSuggestResponse(tags=tags, method=method)
 
 
 def _has_stl(model_id: str) -> bool:

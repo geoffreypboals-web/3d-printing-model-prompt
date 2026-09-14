@@ -6,6 +6,47 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ## [Unreleased]
 
+### Added (thumbnail rendering)
+
+- `POST /thumbnail` - renders a square PNG thumbnail of an uploaded mesh
+  or STEP file via headless Blender (`thumbnail.py`,
+  `blender_scripts/render_thumbnail.py`): auto-framed orthographic
+  camera, Workbench-engine flat studio shading (no material/light setup
+  needed, fast enough to run per-file on demand). STEP/STP input is
+  first converted to a mesh via the FreeCAD backend's `step_to_mesh()`,
+  since Blender has no STEP importer. `.3mf` and `.amf` are deliberately
+  unsupported here - `.3mf` should use its own embedded slicer-preview
+  PNG instead (cheaper, more accurate) and `.amf` has no importer
+  anywhere in this pipeline. Built for the farm-manager sibling repo's
+  library scanner, which has no CAD tooling of its own - see
+  `docs/industry-tool-review-and-recommendations.md` #7 in that repo.
+- `THUMBNAIL_MAX_SIZE_PX` (default 2048) caps the requested render
+  resolution.
+
+### Added (FreeCAD backend: wall-thickness, STEP, solid healing)
+
+- FreeCAD (`freecad-python3` apt package, headless via `freecadcmd`) added
+  as a third CAD backend alongside OpenSCAD/Blender - Blender remains the
+  default/fallback for organic and mesh-only models; FreeCAD is tried
+  first only where it has a real advantage (solid B-rep operations).
+- `thickness.mesh_shell()` now tries FreeCAD's Part Thickness first for
+  `.stl` input, falling back to Blender's Solidify automatically if
+  FreeCAD is unavailable or the input isn't solid enough - no API change,
+  existing `/thicken` endpoints are unaffected.
+- `POST /step/upload`, `POST /models/{model_id}/export-step` - convert a
+  STEP solid to/from this service's mesh pipeline (a best-effort B-rep
+  wrap of the mesh, not true reverse-engineered parametric CAD).
+- `POST /models/{model_id}/repair-solid` - heals malformed B-rep topology
+  via OCCT's ShapeFix, a different class of repair than `/repair`'s
+  Blender-based open-boundary hole filling.
+- `GET /health` now reports `freecad_available` (doesn't affect
+  `status`/degraded - FreeCAD absence only disables its own endpoints).
+- `docs/adr/0005-freecad-third-cad-backend.md` records the decision and
+  the real semantic limitations found during development (Part Thickness
+  needs an opening face, unlike Blender's Solidify; `Part.export()` on a
+  bare shape silently omits all solid geometry - use `shape.exportStep()`;
+  STEP import only works via `Part.read()`, not `Part.insert`/`Import.*`).
+
 ### Added (watertight analysis/repair)
 
 - `POST /watertight/upload`, `POST /models/{model_id}/analyze`,

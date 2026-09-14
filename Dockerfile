@@ -1,9 +1,9 @@
 # Project: 3D Printing Model Prompt
 # File: /home/user/3d-printing-model-prompt/Dockerfile
 # Description: Container image for the threedprompt HTTP service. Installs
-#     OpenSCAD and headless Blender alongside the Python app so both CAD
-#     backends are available without any host setup (rule 4: Docker-first,
-#     cross-platform).
+#     OpenSCAD, headless Blender, and headless FreeCAD alongside the
+#     Python app so all three CAD backends are available without any
+#     host setup (rule 4: Docker-first, cross-platform).
 # Inputs: requirements.txt, src/, pyproject.toml (build context)
 # Outputs: A runnable image exposing port 8000, running as a non-root user.
 # Troubleshooting:
@@ -11,12 +11,18 @@
 #       base image's package index may be stale - rebuild with
 #       `docker build --no-cache -t threedprompt .`.
 #     - The image is large (~1.5GB+) because Blender pulls in Mesa/OpenGL
-#       libraries even for headless use - that's expected, not a bug.
+#       libraries even for headless use, and freecad-python3 pulls in
+#       Qt/PySide2/OpenCASCADE/VTK - that's expected, not a bug, same
+#       tradeoff as Blender's.
 #     - watertight.py's viewer.glb export (glTF) fails inside Blender with
 #       "No module named 'numpy'" without python3-numpy below - the Debian
 #       apt `blender` package links the *system* Python rather than
 #       bundling its own, so its glTF export addon needs numpy available
 #       to that same system Python. See TROUBLESHOOTING.md.
+#     - freecad-python3's apt package installs its headless CLI at
+#       /usr/lib/freecad/bin/freecadcmd-python3, symlinked to
+#       /usr/bin/freecadcmd (not /usr/bin/freecad, which needs the much
+#       larger `freecad` GUI package this image deliberately skips).
 
 FROM python:3.11-slim
 
@@ -36,6 +42,7 @@ FROM python:3.11-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openscad \
     blender \
+    freecad-python3 \
     python3-numpy \
     python3-pip \
     libgl1 \
