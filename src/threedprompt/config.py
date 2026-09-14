@@ -94,6 +94,7 @@ class Settings:
     max_prompt_length: int = field(default_factory=lambda: _env_int("MAX_PROMPT_LENGTH", 2000))
     max_upload_bytes: int = field(default_factory=lambda: _env_int("MAX_UPLOAD_BYTES", 300 * 1024 * 1024))
     max_wall_thickness_mm: float = field(default_factory=lambda: _env_float("MAX_WALL_THICKNESS_MM", 20.0))
+    thumbnail_max_size_px: int = field(default_factory=lambda: _env_int("THUMBNAIL_MAX_SIZE_PX", 2048))
 
     # --- Server ---
     host: str = field(default_factory=lambda: os.environ.get("HOST", "0.0.0.0"))

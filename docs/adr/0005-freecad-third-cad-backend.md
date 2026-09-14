@@ -121,3 +121,15 @@ reach for `/repair`, not `/repair-solid`.
   Qt/OpenCASCADE/VTK dependencies add a comparable amount) - accepted as
   the same known tradeoff already made for Blender, not re-litigated
   here.
+
+## Addendum 2026-09-14: thumbnail rendering reuses `step_to_mesh()`
+
+`thumbnail.py`'s `POST /thumbnail` endpoint needed a way to render a
+preview image for STEP files, and Blender has no STEP importer at all.
+Rather than adding a second STEP-to-mesh conversion path, it calls the
+exact same `freecad_cad.step_to_mesh()` this ADR already covers, into a
+temporary file, then hands that mesh to Blender's own thumbnail-rendering
+script. This is the first real reuse of `freecad_cad.py` from outside
+`thickness.py`, and confirms the wrapper-module shape (one small function
+per capability, no shared state) composes cleanly for a caller that only
+needs one of its four operations.

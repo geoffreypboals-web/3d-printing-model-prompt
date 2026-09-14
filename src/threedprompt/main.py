@@ -31,6 +31,9 @@ Troubleshooting:
       OpenSCAD/Blender, FreeCAD isn't required for the service overall -
       thickening still works via Blender without it, only the
       FreeCAD-specific endpoints fail).
+    - 503 from /thumbnail on a .step/.stp upload specifically can mean
+      either Blender or FreeCAD is unavailable - STEP thumbnails go
+      through both (FreeCAD converts to a mesh first, Blender renders it).
     - Run locally with: uvicorn threedprompt.main:app --reload
       (see README.md at /home/user/3d-printing-model-prompt/README.md
       for the full command including PYTHONPATH setup).
@@ -45,7 +48,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from threedprompt import blender_generator, freecad_cad, openscad_generator, storage, thickness, watertight
+from threedprompt import blender_generator, freecad_cad, openscad_generator, storage, thickness, thumbnail, watertight
 from threedprompt.blender_generator import BlenderGenerationError
 from threedprompt.classifier import classify_prompt
 from threedprompt.config import settings
@@ -489,6 +492,41 @@ def repair_model_solid(model_id: str) -> RepairSolidResponse:
         valid_after=result["valid_after"],
         download_url=f"/models/{model_id}/download",
     )
+
+
+_THUMBNAIL_SIZE_FORM = Form(thumbnail.DEFAULT_SIZE_PX, ge=thumbnail.MIN_SIZE_PX)
+
+
+@app.post("/thumbnail")
+async def render_thumbnail(file: UploadFile = _UPLOAD_FILE, size: int = _THUMBNAIL_SIZE_FORM) -> FileResponse:
+    """
+    Render a PNG thumbnail of an uploaded mesh or STEP file via headless
+    Blender (STEP first converted to a mesh via FreeCAD), returning the
+    image directly - one round trip, mirroring /thicken's shape. Intended
+    for a caller like the farm-manager sibling repo's library scanner,
+    which has no CAD tooling of its own.
+    """
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in thumbnail.SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unsupported file type {suffix!r}; expected one of {sorted(thumbnail.SUPPORTED_EXTENSIONS)}",
+        )
+    if size > settings.thumbnail_max_size_px:
+        raise HTTPException(
+            status_code=422, detail=f"size exceeds THUMBNAIL_MAX_SIZE_PX ({settings.thumbnail_max_size_px})"
+        )
+    content = await file.read()
+    if len(content) > settings.max_upload_bytes:
+        raise HTTPException(status_code=413, detail=f"upload exceeds MAX_UPLOAD_BYTES ({settings.max_upload_bytes})")
+
+    upload_model_id, upload_path = storage.save_upload(file.filename or "model.stl", content)
+    try:
+        png_path = storage.model_dir(upload_model_id) / "thumbnail.png"
+        thumbnail.render_mesh_thumbnail(upload_path, png_path, size=size)
+    except thumbnail.ThumbnailError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return FileResponse(png_path, media_type="image/png", filename=f"{upload_model_id}.png")
 
 
 def _has_stl(model_id: str) -> bool:

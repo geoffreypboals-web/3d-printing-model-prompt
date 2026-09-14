@@ -6,6 +6,23 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ## [Unreleased]
 
+### Added (thumbnail rendering)
+
+- `POST /thumbnail` - renders a square PNG thumbnail of an uploaded mesh
+  or STEP file via headless Blender (`thumbnail.py`,
+  `blender_scripts/render_thumbnail.py`): auto-framed orthographic
+  camera, Workbench-engine flat studio shading (no material/light setup
+  needed, fast enough to run per-file on demand). STEP/STP input is
+  first converted to a mesh via the FreeCAD backend's `step_to_mesh()`,
+  since Blender has no STEP importer. `.3mf` and `.amf` are deliberately
+  unsupported here - `.3mf` should use its own embedded slicer-preview
+  PNG instead (cheaper, more accurate) and `.amf` has no importer
+  anywhere in this pipeline. Built for the farm-manager sibling repo's
+  library scanner, which has no CAD tooling of its own - see
+  `docs/industry-tool-review-and-recommendations.md` #7 in that repo.
+- `THUMBNAIL_MAX_SIZE_PX` (default 2048) caps the requested render
+  resolution.
+
 ### Added (FreeCAD backend: wall-thickness, STEP, solid healing)
 
 - FreeCAD (`freecad-python3` apt package, headless via `freecadcmd`) added

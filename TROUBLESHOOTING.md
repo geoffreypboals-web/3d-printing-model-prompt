@@ -224,6 +224,32 @@ itself before handing off to `argparse` - always route a new script's
 argument parsing through that helper rather than reading `sys.argv`
 directly.
 
+## `POST /thumbnail` returns 422 for a `.3mf` or `.amf` file
+
+Both are deliberately unsupported by this endpoint, not a bug.
+`.3mf` files carry their own embedded slicer-preview PNG - extract that
+directly (the farm-manager sibling repo's `libraryAssets.ts` already
+does) rather than paying for a fresh Blender render of a re-triangulated
+mesh. `.amf` has no importer in either Blender or FreeCAD's Mesh module,
+so there's no path to a thumbnail for it at all today.
+
+## `POST /thumbnail` on a `.step`/`.stp` file returns 503 even though `blender_available: true`
+
+STEP thumbnails go through **both** backends: FreeCAD converts the file
+to a mesh first (`freecad_cad.step_to_mesh()`), then Blender renders that
+mesh. Check `GET /health`'s `freecad_available` field too - a STEP
+thumbnail fails if either binary is missing, not just Blender.
+
+## A thumbnail renders as a flat gray silhouette with no shading definition
+
+Expected, not a bug - `render_thumbnail.py` uses Workbench's `'MATERIAL'`
+color mode, which falls back to Blender's default gray when the mesh has
+no material (most bare STL/STEP input). An OBJ with a `.mtl` beside it
+picks up real colors instead. If you want every thumbnail to render
+identically regardless of material, that's `'SINGLE'` color mode - not
+currently exposed as an option, would need a new `--color-mode` arg on
+the script if a caller wants it.
+
 ## Backups & data durability
 
 `OUTPUT_DIR` (a plain directory, `./output` by default / a Docker named

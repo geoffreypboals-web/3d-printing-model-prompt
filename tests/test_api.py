@@ -20,7 +20,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from threedprompt import blender_generator, main, openscad_generator, storage, thickness, watertight
+from threedprompt import blender_generator, main, openscad_generator, storage, thickness, thumbnail, watertight
 from threedprompt.models import (
     Backend,
     BoundingBox,
@@ -403,3 +403,49 @@ def test_viewer_glb_missing_returns_404(client):
     model_id = upload_resp.json()["model_id"]
     resp = client.get(f"/models/{model_id}/viewer.glb")
     assert resp.status_code == 404
+
+
+def test_thumbnail_golden_path(monkeypatch, client):
+    def fake_render(input_path, output_path, *, size=thumbnail.DEFAULT_SIZE_PX):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"\x89PNG\r\n\x1a\nfakepng")
+        return output_path
+
+    monkeypatch.setattr(thumbnail, "render_mesh_thumbnail", fake_render)
+
+    resp = client.post(
+        "/thumbnail",
+        files={"file": ("uploaded.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
+        data={"size": "256"},
+    )
+    assert resp.status_code == 200
+    assert resp.content == b"\x89PNG\r\n\x1a\nfakepng"
+    assert resp.headers["content-type"] == "image/png"
+
+
+def test_thumbnail_rejects_unsupported_extension(client):
+    resp = client.post(
+        "/thumbnail",
+        files={"file": ("uploaded.amf", b"<amf></amf>", "application/octet-stream")},
+    )
+    assert resp.status_code == 422
+
+
+def test_thumbnail_rejects_oversized_size(client):
+    resp = client.post(
+        "/thumbnail",
+        files={"file": ("uploaded.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
+        data={"size": "999999"},
+    )
+    assert resp.status_code == 422
+
+
+def test_thumbnail_rejects_oversized_file(monkeypatch, client):
+    from threedprompt.config import settings
+
+    monkeypatch.setattr(settings, "max_upload_bytes", 10)
+    resp = client.post(
+        "/thumbnail",
+        files={"file": ("uploaded.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
+    )
+    assert resp.status_code == 413
