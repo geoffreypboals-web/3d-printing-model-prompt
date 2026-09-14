@@ -20,7 +20,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from threedprompt import openscad_generator, thickness
+from threedprompt import freecad_cad, openscad_generator, thickness
 from threedprompt.config import settings
 from threedprompt.thickness import ThicknessError, mesh_shell, regenerate_from_source
 
@@ -83,6 +83,17 @@ def test_regenerate_from_source_missing_variable_raises():
 
 
 def test_mesh_shell_golden_path(monkeypatch, tmp_path):
+    # thickness.shutil/thickness.subprocess are the *same* module objects
+    # freecad_cad.py imported (a plain `import shutil`/`import subprocess`
+    # everywhere resolves to one shared module in sys.modules) - patching
+    # them here would make freecad_cad's own binary lookup + subprocess
+    # call "succeed" too, routing this Blender-focused test through the
+    # FreeCAD-first path instead. Force straight to Blender by making the
+    # FreeCAD attempt fail, matching this test's actual intent.
+    def _freecad_unavailable(*args, **kwargs):
+        raise freecad_cad.FreeCADCADError("not installed in this test")
+
+    monkeypatch.setattr(thickness.freecad_cad, "thicken_mesh", _freecad_unavailable)
     monkeypatch.setattr(thickness.shutil, "which", _fake_which_blender)
     monkeypatch.setattr(thickness.subprocess, "run", _make_fake_blender_run(succeed=True))
 
@@ -94,6 +105,66 @@ def test_mesh_shell_golden_path(monkeypatch, tmp_path):
 
     assert result_path.is_file()
     assert result_path == output_dir / "model.stl"
+
+
+def test_mesh_shell_tries_freecad_first_for_stl_and_skips_blender(monkeypatch, tmp_path):
+    blender_called = False
+
+    def _fake_thicken_mesh(input_path, amount_mm, output_path):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"solid fake\nendsolid fake\n")
+        return {"ok": True, "thickened_volume": 712.0}
+
+    def _blender_should_not_run(*args, **kwargs):
+        nonlocal blender_called
+        blender_called = True
+
+    monkeypatch.setattr(thickness.freecad_cad, "thicken_mesh", _fake_thicken_mesh)
+    monkeypatch.setattr(thickness.subprocess, "run", _blender_should_not_run)
+
+    input_stl = tmp_path / "uploaded.stl"
+    input_stl.write_bytes(b"solid fake\nendsolid fake\n")
+
+    result_path = mesh_shell(input_stl, amount_mm=2.0, output_dir=tmp_path / "out")
+
+    assert result_path.is_file()
+    assert blender_called is False
+
+
+def test_mesh_shell_falls_back_to_blender_when_freecad_fails(monkeypatch, tmp_path):
+    def _fake_thicken_mesh(input_path, amount_mm, output_path):
+        raise freecad_cad.FreeCADCADError("Null input shape")
+
+    monkeypatch.setattr(thickness.freecad_cad, "thicken_mesh", _fake_thicken_mesh)
+    monkeypatch.setattr(thickness.shutil, "which", _fake_which_blender)
+    monkeypatch.setattr(thickness.subprocess, "run", _make_fake_blender_run(succeed=True))
+
+    input_stl = tmp_path / "uploaded.stl"
+    input_stl.write_bytes(b"solid fake\nendsolid fake\n")
+
+    result_path = mesh_shell(input_stl, amount_mm=2.0, output_dir=tmp_path / "out")
+
+    assert result_path.is_file()
+
+
+def test_mesh_shell_with_quad_target_faces_skips_freecad(monkeypatch, tmp_path):
+    freecad_called = False
+
+    def _freecad_should_not_run(*args, **kwargs):
+        nonlocal freecad_called
+        freecad_called = True
+
+    monkeypatch.setattr(thickness.freecad_cad, "thicken_mesh", _freecad_should_not_run)
+    monkeypatch.setattr(thickness.shutil, "which", _fake_which_blender)
+    monkeypatch.setattr(thickness.subprocess, "run", _make_fake_blender_run(succeed=True))
+
+    input_stl = tmp_path / "uploaded.stl"
+    input_stl.write_bytes(b"solid fake\nendsolid fake\n")
+
+    result_path = mesh_shell(input_stl, amount_mm=2.0, output_dir=tmp_path / "out", quad_target_faces=100)
+
+    assert result_path.is_file()
+    assert freecad_called is False
 
 
 def test_mesh_shell_exceeds_max_thickness_raises_without_calling_blender(monkeypatch, tmp_path):

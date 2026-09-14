@@ -15,9 +15,11 @@ Troubleshooting:
       and, for Ollama, that OLLAMA_HOST is reachable from inside the
       container (use the Docker service name, not "localhost", when
       running via docker-compose).
-    - If OpenSCAD/Blender generation fails with "binary not found", check
-      OPENSCAD_BINARY / BLENDER_BINARY match what's actually on PATH
-      inside the container (see the Dockerfile).
+    - If OpenSCAD/Blender/FreeCAD generation fails with "binary not
+      found", check OPENSCAD_BINARY / BLENDER_BINARY / FREECAD_BINARY
+      match what's actually on PATH inside the container (see the
+      Dockerfile) - FreeCAD's apt package installs its headless CLI as
+      /usr/bin/freecadcmd, not /usr/bin/freecad.
 """
 
 from __future__ import annotations
@@ -82,6 +84,7 @@ class Settings:
     # --- External CAD tool binaries ---
     openscad_binary: str = field(default_factory=lambda: os.environ.get("OPENSCAD_BINARY", "openscad"))
     blender_binary: str = field(default_factory=lambda: os.environ.get("BLENDER_BINARY", "blender"))
+    freecad_binary: str = field(default_factory=lambda: os.environ.get("FREECAD_BINARY", "freecadcmd"))
     cad_subprocess_timeout_seconds: int = field(default_factory=lambda: _env_int("CAD_SUBPROCESS_TIMEOUT_SECONDS", 180))
 
     # --- Storage ---

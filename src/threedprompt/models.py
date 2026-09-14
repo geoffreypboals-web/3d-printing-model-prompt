@@ -118,6 +118,7 @@ class HealthResponse(BaseModel):
     status: Literal["ok", "degraded"]
     openscad_available: bool
     blender_available: bool
+    freecad_available: bool
     llm_provider: str
     llm_reachable: bool
 
@@ -257,7 +258,22 @@ class RepairResponse(BaseModel):
 
 
 class UploadResponse(BaseModel):
-    """POST /watertight/upload response body."""
+    """POST /watertight/upload and POST /step/upload response body."""
 
     model_id: str
     filename: str
+
+
+# --- FreeCAD-backed features: STEP conversion & solid healing ---
+# Added alongside thickness.py's FreeCAD-first mesh-shell path - see
+# docs/adr/0005-freecad-third-cad-backend.md.
+
+
+class RepairSolidResponse(BaseModel):
+    """POST /models/{model_id}/repair-solid response body."""
+
+    model_id: str
+    fixed: bool
+    valid_before: bool
+    valid_after: bool
+    download_url: str
