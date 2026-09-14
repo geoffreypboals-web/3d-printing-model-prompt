@@ -34,6 +34,12 @@ Troubleshooting:
     - 503 from /thumbnail on a .step/.stp upload specifically can mean
       either Blender or FreeCAD is unavailable - STEP thumbnails go
       through both (FreeCAD converts to a mesh first, Blender renders it).
+    - /tags/suggest never 503s - if the LLM is unreachable or its response
+      is unparseable, it falls back to filename-derived heuristic tags and
+      reports method="heuristic_fallback" (check GET /health's llm field
+      to tell "unreachable" apart from "reachable but replied
+      unparseable"). See tag_suggester.py's header for the text-only vs.
+      vision-based tagging tradeoff.
     - Run locally with: uvicorn threedprompt.main:app --reload
       (see README.md at /home/user/3d-printing-model-prompt/README.md
       for the full command including PYTHONPATH setup).
@@ -48,7 +54,16 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from threedprompt import blender_generator, freecad_cad, openscad_generator, storage, thickness, thumbnail, watertight
+from threedprompt import (
+    blender_generator,
+    freecad_cad,
+    openscad_generator,
+    storage,
+    tag_suggester,
+    thickness,
+    thumbnail,
+    watertight,
+)
 from threedprompt.blender_generator import BlenderGenerationError
 from threedprompt.classifier import classify_prompt
 from threedprompt.config import settings
@@ -67,6 +82,8 @@ from threedprompt.models import (
     RepairRequest,
     RepairResponse,
     RepairSolidResponse,
+    TagSuggestRequest,
+    TagSuggestResponse,
     ThickenRequest,
     ThickenResponse,
     UploadResponse,
@@ -527,6 +544,19 @@ async def render_thumbnail(file: UploadFile = _UPLOAD_FILE, size: int = _THUMBNA
     except thumbnail.ThumbnailError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return FileResponse(png_path, media_type="image/png", filename=f"{upload_model_id}.png")
+
+
+@app.post("/tags/suggest", response_model=TagSuggestResponse)
+def suggest_tags(request: TagSuggestRequest) -> TagSuggestResponse:
+    """
+    Suggest descriptive tags for a library file from its name/metadata via
+    the configured LLM backend (Ollama-first). Text-only reasoning, not
+    vision -- see tag_suggester.py's header for the upgrade path. Never
+    fails: falls back to filename-derived heuristic tags (method field
+    reports which path was used) rather than returning an error.
+    """
+    tags, method = tag_suggester.suggest_tags(request)
+    return TagSuggestResponse(tags=tags, method=method)
 
 
 def _has_stl(model_id: str) -> bool:

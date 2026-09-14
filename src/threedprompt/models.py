@@ -112,6 +112,25 @@ class ThickenResponse(BaseModel):
     download_url: str
 
 
+class TagSuggestRequest(BaseModel):
+    """POST /tags/suggest request body."""
+
+    file_name: str = Field(..., min_length=1, description="The model file's name, e.g. 'dragon_articulated_v2.stl'.")
+    designer_name: str | None = Field(default=None, description="Designer/creator name, if known.")
+    extension: str | None = Field(default=None, description="File extension, e.g. '.stl'.")
+    existing_tags: list[str] = Field(
+        default_factory=list, description="Tags already applied, so suggestions don't just repeat them."
+    )
+    colors: list[str] = Field(default_factory=list, description="Filament colors from slicer metadata, if known.")
+
+
+class TagSuggestResponse(BaseModel):
+    """POST /tags/suggest response body."""
+
+    tags: list[str]
+    method: Literal["llm", "heuristic_fallback"]
+
+
 class HealthResponse(BaseModel):
     """GET /health response body."""
 
