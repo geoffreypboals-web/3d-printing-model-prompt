@@ -8,7 +8,8 @@ Description: Shared pytest fixtures - redirects storage.output_dir at a
     STL writer so those fixtures don't need Blender just to be created.
 Inputs: pytest's tmp_path fixture.
 Outputs: fixtures `tmp_output_dir` (autouse), `fake_llm_client`,
-    `watertight_cube_stl`, `cube_missing_one_triangle_stl`.
+    `watertight_cube_stl`, `cube_missing_one_triangle_stl`,
+    `bumpy_box_stl`.
 Troubleshooting:
     - If a test leaks state into another, check it isn't writing outside
       settings.output_dir - tmp_output_dir only redirects that one field.
@@ -117,4 +118,52 @@ def cube_missing_one_triangle_stl(tmp_path) -> Path:
     """A unit-cube STL missing one triangle - exactly one boundary-edge hole, not watertight."""
     path = tmp_path / "cube_with_gap.stl"
     _write_binary_stl(path, _CUBE_TRIANGLES[1:])  # drop one of the two bottom-face triangles
+    return path
+
+
+# A 20x20x6mm watertight box (spanning -10..10 in X/Y, 0..6 in Z) with one
+# top corner lifted to (8, -8, 9) - a real, unambiguous off-center bump
+# for FR-7's geometry-aware vent-placement tests (see
+# docs/adr/0011-geometry-aware-vent-placement.md). Far enough from the
+# sprue (centered at the cavity's own XY center, 0,0) to survive
+# _find_vent_xy's exclude-radius filter.
+_BUMPY_BOX_VERTICES = {
+    "000": (-10.0, -10.0, 0.0),
+    "100": (10.0, -10.0, 0.0),
+    "010": (-10.0, 10.0, 0.0),
+    "110": (10.0, 10.0, 0.0),
+    "001": (-10.0, -10.0, 6.0),
+    "101": (10.0, -10.0, 6.0),
+    "011": (-10.0, 10.0, 6.0),
+    "111": (8.0, -8.0, 9.0),  # lifted corner = the bump apex
+}
+_BUMPY_BOX_TRIANGLES = [
+    ("000", "010", "110"),
+    ("000", "110", "100"),
+    ("001", "101", "111"),
+    ("001", "111", "011"),
+    ("000", "100", "101"),
+    ("000", "101", "001"),
+    ("010", "011", "111"),
+    ("010", "111", "110"),
+    ("000", "001", "011"),
+    ("000", "011", "010"),
+    ("100", "110", "111"),
+    ("100", "111", "101"),
+]
+
+
+@pytest.fixture
+def bumpy_box_stl(tmp_path) -> Path:
+    """A watertight 20x20x6mm box with one corner lifted into an off-center bump (see above)."""
+    path = tmp_path / "bumpy_box.stl"
+    with open(path, "wb") as f:
+        f.write(b"\x00" * 80)
+        f.write(struct.pack("<I", len(_BUMPY_BOX_TRIANGLES)))
+        for a, b, c in _BUMPY_BOX_TRIANGLES:
+            v0, v1, v2 = _BUMPY_BOX_VERTICES[a], _BUMPY_BOX_VERTICES[b], _BUMPY_BOX_VERTICES[c]
+            f.write(struct.pack("<3f", 0.0, 0.0, 0.0))
+            for v in (v0, v1, v2):
+                f.write(struct.pack("<3f", *v))
+            f.write(struct.pack("<H", 0))
     return path

@@ -3,12 +3,13 @@ Project: 3D Printing Model Prompt
 File: /home/user/3d-printing-model-prompt/src/threedprompt/main.py
 Description: FastAPI application wiring together the classifier, the two
     generation backends (OpenSCAD for simple parts, Blender for complex
-    ones), the wall-thickness endpoints, and the watertight analysis/
-    repair endpoints. This is the only HTTP-facing module - it does no
-    CAD/LLM work itself, only routing, validation, and translating domain
-    errors into HTTP responses. Also serves the browser UI
-    (static/index.html) at "/" for picking a local file, modifying it,
-    and downloading the result without needing curl/Swagger.
+    ones), the wall-thickness endpoints, the mold-generation endpoints,
+    and the watertight analysis/repair endpoints. This is the only
+    HTTP-facing module - it does no CAD/LLM work itself, only routing,
+    validation, and translating domain errors into HTTP responses. Also
+    serves the browser UI (static/index.html) at "/" for picking a local
+    file, modifying it, and downloading the result without needing
+    curl/Swagger.
 Inputs: HTTP requests (see models.py for request/response schemas).
 Outputs: HTTP responses; STL files written under settings.output_dir as
     a side effect.
@@ -16,8 +17,12 @@ Troubleshooting:
     - 503 from any endpoint means an external tool (openscad, blender, or
       the LLM) is unavailable or misconfigured - check GET /health first,
       it reports each dependency's status individually.
-    - 413 on /thicken means the uploaded file exceeded MAX_UPLOAD_BYTES;
-      raise that env var if you intentionally need larger uploads.
+    - 413 on /thicken or /mold means the uploaded file exceeded
+      MAX_UPLOAD_BYTES; raise that env var if you intentionally need
+      larger uploads.
+    - 422 "exceeding MAX_MOLD_DIMENSION_MM" from /mold: the requested
+      clearance/wall/flange would build a box bigger than that cap (a
+      typo in mm vs cm is the usual cause) - see mold.py.
     - "/" 404s or shows raw JSON instead of the UI: the StaticFiles mount
       must be the LAST route registered (it's a catch-all at "/") - if a
       new API route is added below it by mistake, it'll never be reached.
@@ -39,27 +44,34 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from threedprompt import blender_generator, openscad_generator, storage, thickness, watertight
+from threedprompt import blender_generator, draft_analysis, mold, openscad_generator, storage, thickness, watertight
 from threedprompt.blender_generator import BlenderGenerationError
 from threedprompt.classifier import classify_prompt
 from threedprompt.config import settings
+from threedprompt.draft_analysis import DraftAnalysisError
 from threedprompt.llm_client import LLMError, get_llm_client
 from threedprompt.logging_config import configure_logging, get_logger
 from threedprompt.models import (
     AnalyzeResponse,
     Backend,
     Complexity,
+    DraftCheckRequest,
+    DraftCheckResponse,
+    DraftReport,
     FlippedNormalIsland,
     GenerateRequest,
     GenerateResponse,
     HealthResponse,
     Hole,
+    MoldRequest,
+    MoldResponse,
     RepairRequest,
     RepairResponse,
     ThickenRequest,
     ThickenResponse,
     UploadResponse,
 )
+from threedprompt.mold import MoldError
 from threedprompt.openscad_generator import OpenScadGenerationError
 from threedprompt.thickness import ThicknessError
 from threedprompt.watertight import WatertightError
@@ -229,11 +241,30 @@ def thicken_existing_model(model_id: str, request: ThickenRequest) -> ThickenRes
 _UPLOAD_FILE = File(...)
 _AMOUNT_MM_FORM = Form(...)
 _QUAD_TARGET_FACES_FORM = Form(0, ge=0, le=1_000_000)
+_CLEARANCE_MM_FORM = Form(8.0, gt=0)
+_POUR_BOX_WALL_MM_FORM = Form(4.0, gt=0)
+_KEY_DIAMETER_MM_FORM = Form(6.0, gt=0)
+_SPRUE_DIAMETER_MM_FORM = Form(10.0, gt=0)
+_VENT_DIAMETER_MM_FORM = Form(4.0, gt=0)
+_CLAMP_WALL_MM_FORM = Form(6.0, gt=0)
+_CLAMP_FLANGE_WIDTH_MM_FORM = Form(12.0, gt=0)
+_BOLT_HOLE_DIAMETER_MM_FORM = Form(4.5, gt=0)
+_MOLD_MODE_FORM = Form("silicone_block")
+_DIRECT_MOLD_WALL_MM_FORM = Form(6.0, gt=0)
+_SHELL_THICKNESS_MM_FORM = Form(3.0, gt=0)
+_SKIN_POUR_WALL_MM_FORM = Form(3.0, gt=0)
+_SUPPORT_JACKET_WALL_MM_FORM = Form(5.0, gt=0)
+_CAST_WALL_THICKNESS_MM_FORM = Form(4.0, gt=0)
+_PARTING_AXIS_FORM = Form("z")
+_PARTING_OFFSET_MM_FORM = Form(0.0)
+_MATERIAL_DENSITY_G_PER_CM3_FORM = Form(None, gt=0)
 
 
 @app.post("/thicken")
 async def thicken_uploaded_file(
-    file: UploadFile = _UPLOAD_FILE, amount_mm: float = _AMOUNT_MM_FORM, quad_target_faces: int = _QUAD_TARGET_FACES_FORM
+    file: UploadFile = _UPLOAD_FILE,
+    amount_mm: float = _AMOUNT_MM_FORM,
+    quad_target_faces: int = _QUAD_TARGET_FACES_FORM,
 ) -> FileResponse:
     """
     Increase the wall thickness of an arbitrary uploaded STL/OBJ file via
@@ -253,7 +284,8 @@ async def thicken_uploaded_file(
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in _ALLOWED_UPLOAD_SUFFIXES:
         raise HTTPException(
-            status_code=422, detail=f"unsupported file type '{suffix}'; expected one of {sorted(_ALLOWED_UPLOAD_SUFFIXES)}"
+            status_code=422,
+            detail=f"unsupported file type '{suffix}'; expected one of {sorted(_ALLOWED_UPLOAD_SUFFIXES)}",
         )
 
     content = await file.read()
@@ -273,6 +305,244 @@ async def thicken_uploaded_file(
         )
     except ThicknessError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+_MOLD_PART_FILENAMES = {
+    "silicone_block": ("pour_box_bottom.stl", "pour_box_top.stl", "clamp_shell_bottom.stl", "clamp_shell_top.stl"),
+    "direct_cast": ("direct_mold_bottom.stl", "direct_mold_top.stl"),
+    "form_fitting": (
+        "skin_pour_bottom.stl",
+        "skin_pour_top.stl",
+        "support_jacket_bottom.stl",
+        "support_jacket_top.stl",
+    ),
+    "hollow_cast": ("hollow_cast_bottom.stl", "hollow_cast_top.stl", "hollow_cast_core.stl"),
+}
+
+
+def _draft_summary(report: DraftReport | None) -> dict | None:
+    """
+    Compact {'releasable', 'problem_island_count'} summary of a
+    DraftReport for MoldResponse/the upload endpoint's response headers
+    - full per-face detail is available via
+    POST /models/{model_id}/mold/draft-check instead of duplicating it
+    here on every mold-generation response.
+    """
+    if report is None:
+        return None
+    return {"releasable": report.releasable, "problem_island_count": len(report.problem_islands)}
+
+
+def _mold_error_status(exc: MoldError) -> int:
+    """422 for a bad request the caller can fix (bad param, box too big, unrepairable mesh); 503 for Blender failing."""
+    message = str(exc)
+    if (
+        "must be greater than 0" in message
+        or "MAX_MOLD_DIMENSION_MM" in message
+        or "is not watertight" in message
+        or "hole(s) remain" in message
+        or "parting_axis must be" in message
+        or "would put the parting plane" in message
+        or "must be smaller than the cavity's own footprint" in message
+    ):
+        return 422
+    return 503
+
+
+def _estimated_mass_g(volume_cm3: float, density_g_per_cm3: float | None) -> float | None:
+    """cavity_volume_cm3 * density (FR-8), or None if no density was supplied."""
+    return volume_cm3 * density_g_per_cm3 if density_g_per_cm3 is not None else None
+
+
+@app.post("/models/{model_id}/mold", response_model=MoldResponse)
+def mold_existing_model(model_id: str, request: MoldRequest) -> MoldResponse:
+    """
+    Generate mold tooling (silicone_block: pour box + clamp shell, 4
+    parts; direct_cast: a single rigid mold, 2 parts; form_fitting: a
+    thin skin-pour tool + support jacket, 4 parts; hollow_cast: the
+    direct_cast mold + an inward-offset core, 3 parts - see mold.py) for
+    a model this service generated (or previously thickened/repaired).
+    Always produces a new model_id; download the resulting STL parts as
+    one zip via GET /models/{model_id}/mold.zip.
+    """
+    try:
+        source_path = storage.stl_path(model_id) if _has_stl(model_id) else _any_model_file(model_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    new_model_id, new_dir = storage.new_model_dir()
+    mold_params = request.model_dump()
+    density = mold_params.pop("material_density_g_per_cm3")
+    try:
+        result = mold.make_mold(source_path, new_dir, **mold_params)
+    except MoldError as exc:
+        shutil.rmtree(new_dir, ignore_errors=True)
+        raise HTTPException(status_code=_mold_error_status(exc), detail=str(exc)) from exc
+
+    storage.save_spec(new_model_id, {"parent_model_id": model_id, "method": "mold"})
+    storage.make_zip(new_model_id, list(_MOLD_PART_FILENAMES[request.mode]))
+    return MoldResponse(
+        model_id=new_model_id,
+        download_url=f"/models/{new_model_id}/mold.zip",
+        repaired_hole_ids=result.repaired_hole_ids,
+        draft_check=_draft_summary(result.draft_check),
+        cavity_volume_cm3=result.cavity_volume_cm3,
+        estimated_cast_mass_g=_estimated_mass_g(result.cavity_volume_cm3, density),
+    )
+
+
+@app.post("/mold")
+async def mold_uploaded_file(
+    file: UploadFile = _UPLOAD_FILE,
+    mode: str = _MOLD_MODE_FORM,
+    clearance_mm: float = _CLEARANCE_MM_FORM,
+    pour_box_wall_mm: float = _POUR_BOX_WALL_MM_FORM,
+    key_diameter_mm: float = _KEY_DIAMETER_MM_FORM,
+    sprue_diameter_mm: float = _SPRUE_DIAMETER_MM_FORM,
+    vent_diameter_mm: float = _VENT_DIAMETER_MM_FORM,
+    clamp_wall_mm: float = _CLAMP_WALL_MM_FORM,
+    clamp_flange_width_mm: float = _CLAMP_FLANGE_WIDTH_MM_FORM,
+    bolt_hole_diameter_mm: float = _BOLT_HOLE_DIAMETER_MM_FORM,
+    direct_mold_wall_mm: float = _DIRECT_MOLD_WALL_MM_FORM,
+    shell_thickness_mm: float = _SHELL_THICKNESS_MM_FORM,
+    skin_pour_wall_mm: float = _SKIN_POUR_WALL_MM_FORM,
+    support_jacket_wall_mm: float = _SUPPORT_JACKET_WALL_MM_FORM,
+    cast_wall_thickness_mm: float = _CAST_WALL_THICKNESS_MM_FORM,
+    parting_axis: str = _PARTING_AXIS_FORM,
+    parting_offset_mm: float = _PARTING_OFFSET_MM_FORM,
+    material_density_g_per_cm3: float | None = _MATERIAL_DENSITY_G_PER_CM3_FORM,
+) -> FileResponse:
+    """
+    Generate a mold for an arbitrary uploaded mesh this service didn't
+    generate (silicone_block: pour box + clamp shell, 4 parts;
+    direct_cast: a single rigid mold, 2 parts; form_fitting: a thin
+    skin-pour tool + support jacket, 4 parts; hollow_cast: the
+    direct_cast mold + an inward-offset core, 3 parts - see mold.py), and
+    return the resulting STL parts as one zip directly - same
+    one-round-trip shape as POST /thicken.
+    """
+    if mode not in _MOLD_PART_FILENAMES:
+        raise HTTPException(status_code=422, detail=f"mode must be one of {sorted(_MOLD_PART_FILENAMES)}")
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in _ALLOWED_UPLOAD_SUFFIXES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unsupported file type '{suffix}'; expected one of {sorted(_ALLOWED_UPLOAD_SUFFIXES)}",
+        )
+    content = await file.read()
+    if len(content) > settings.max_upload_bytes:
+        raise HTTPException(status_code=413, detail=f"upload exceeds MAX_UPLOAD_BYTES ({settings.max_upload_bytes})")
+
+    upload_model_id, upload_path = storage.save_upload(file.filename or "model.stl", content)
+    new_model_id, new_dir = storage.new_model_dir()
+    try:
+        result = mold.make_mold(
+            upload_path,
+            new_dir,
+            mode=mode,
+            clearance_mm=clearance_mm,
+            pour_box_wall_mm=pour_box_wall_mm,
+            key_diameter_mm=key_diameter_mm,
+            sprue_diameter_mm=sprue_diameter_mm,
+            vent_diameter_mm=vent_diameter_mm,
+            clamp_wall_mm=clamp_wall_mm,
+            clamp_flange_width_mm=clamp_flange_width_mm,
+            bolt_hole_diameter_mm=bolt_hole_diameter_mm,
+            direct_mold_wall_mm=direct_mold_wall_mm,
+            shell_thickness_mm=shell_thickness_mm,
+            skin_pour_wall_mm=skin_pour_wall_mm,
+            support_jacket_wall_mm=support_jacket_wall_mm,
+            cast_wall_thickness_mm=cast_wall_thickness_mm,
+            parting_axis=parting_axis,
+            parting_offset_mm=parting_offset_mm,
+        )
+    except MoldError as exc:
+        shutil.rmtree(new_dir, ignore_errors=True)
+        raise HTTPException(status_code=_mold_error_status(exc), detail=str(exc)) from exc
+
+    storage.save_spec(new_model_id, {"parent_model_id": upload_model_id, "method": "mold"})
+    zip_path = storage.make_zip(new_model_id, list(_MOLD_PART_FILENAMES[mode]))
+    headers = {
+        "X-Model-Id": new_model_id,
+        "X-Repaired-Hole-Ids": ",".join(str(i) for i in result.repaired_hole_ids),
+        "X-Cavity-Volume-Cm3": str(result.cavity_volume_cm3),
+    }
+    if result.draft_check is not None:
+        headers["X-Draft-Releasable"] = str(result.draft_check.releasable).lower()
+        headers["X-Draft-Problem-Island-Count"] = str(len(result.draft_check.problem_islands))
+    mass = _estimated_mass_g(result.cavity_volume_cm3, material_density_g_per_cm3)
+    if mass is not None:
+        headers["X-Estimated-Cast-Mass-G"] = str(mass)
+    return FileResponse(zip_path, media_type="application/zip", filename=f"{new_model_id}_mold.zip", headers=headers)
+
+
+@app.get("/models/{model_id}/mold.zip")
+def download_mold_zip(model_id: str) -> FileResponse:
+    """Download the generated mold STL parts (4 for silicone_block/form_fitting, 3 for hollow_cast, 2 for
+    direct_cast) as one zip."""
+    path = storage.model_dir(model_id) / "mold.zip"
+    if not path.is_file():
+        raise HTTPException(
+            status_code=404, detail="No mold generated yet for this model_id - call POST /models/{model_id}/mold first"
+        )
+    return FileResponse(path, media_type="application/zip", filename=f"{model_id}_mold.zip")
+
+
+def _problem_island_to_dict(i) -> dict:
+    """Convert a ProblemFaceIsland dataclass into a JSON-safe dict for an HTTP response."""
+    return {
+        "id": i.id,
+        "face_indices": i.face_indices,
+        "centroid": list(i.centroid),
+        "face_count": i.face_count,
+        "min_draft_angle_deg": i.min_draft_angle_deg,
+        "classification": i.classification,
+    }
+
+
+def _draft_error_status(exc: DraftAnalysisError) -> int:
+    """422 for a bad request the caller can fix (bad axis/threshold); 503 for Blender itself failing."""
+    message = str(exc)
+    if "pull_axis must be" in message or "min_draft_angle_deg must be" in message:
+        return 422
+    return 503
+
+
+@app.post("/models/{model_id}/mold/draft-check", response_model=DraftCheckResponse)
+def check_model_draft(model_id: str, request: DraftCheckRequest) -> DraftCheckResponse:
+    """
+    Report which faces of a model would prevent a *rigid* two-part mold
+    from releasing cleanly along request.pull_axis (FR-4) - read-only,
+    generates no files. Purely informational for silicone_block
+    (flexible material forgives most undercuts); direct_cast already
+    runs this automatically as a warning inside POST /mold /
+    POST /models/{model_id}/mold, so calling this first is mainly useful
+    to try a different pull_axis/threshold before committing to a full
+    mold generation.
+    """
+    try:
+        source_path = storage.stl_path(model_id) if _has_stl(model_id) else _any_model_file(model_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    try:
+        report = draft_analysis.analyze_draft(
+            str(source_path), pull_axis=request.pull_axis, min_draft_angle_deg=request.min_draft_angle_deg
+        )
+    except DraftAnalysisError as exc:
+        raise HTTPException(status_code=_draft_error_status(exc), detail=str(exc)) from exc
+
+    return DraftCheckResponse(
+        source_path=report.source_path,
+        pull_axis=report.pull_axis,
+        parting_coordinate=report.parting_coordinate,
+        min_draft_angle_deg=report.min_draft_angle_deg,
+        releasable=report.releasable,
+        problem_islands=[_problem_island_to_dict(i) for i in report.problem_islands],
+        vertex_count=report.vertex_count,
+        face_count=report.face_count,
+        blender_version=report.blender_version,
+    )
 
 
 _WATERTIGHT_UPLOAD_SUFFIXES = watertight.SUPPORTED_EXTENSIONS

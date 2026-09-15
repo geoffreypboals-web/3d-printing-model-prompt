@@ -20,16 +20,28 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from threedprompt import blender_generator, main, openscad_generator, storage, thickness, watertight
+from threedprompt import (
+    blender_generator,
+    draft_analysis,
+    main,
+    mold,
+    openscad_generator,
+    storage,
+    thickness,
+    watertight,
+)
 from threedprompt.models import (
     Backend,
     BoundingBox,
     ClassificationMethod,
     ClassificationResult,
     Complexity,
+    DraftReport,
     GenerationResult,
     Hole,
     HoleClassification,
+    MoldResult,
+    ProblemFaceIsland,
     RepairResult,
     WatertightReport,
 )
@@ -273,6 +285,455 @@ def test_thicken_upload_rejects_oversized_file(monkeypatch, client):
         data={"amount_mm": "2.0"},
     )
     assert resp.status_code == 413
+
+
+def _fake_make_mold(input_path, output_dir, **kwargs):
+    output_dir.mkdir(parents=True, exist_ok=True)
+    mode = kwargs.get("mode")
+    if mode == "direct_cast":
+        part_names = ("direct_mold_bottom", "direct_mold_top")
+    elif mode == "form_fitting":
+        part_names = ("skin_pour_bottom", "skin_pour_top", "support_jacket_bottom", "support_jacket_top")
+    elif mode == "hollow_cast":
+        part_names = ("hollow_cast_bottom", "hollow_cast_top", "hollow_cast_core")
+    else:
+        part_names = ("pour_box_bottom", "pour_box_top", "clamp_shell_bottom", "clamp_shell_top")
+    paths = {}
+    for name in part_names:
+        p = output_dir / f"{name}.stl"
+        p.write_bytes(b"solid fake\nendsolid fake\n")
+        paths[name] = str(p)
+    return MoldResult(**{f"{name}_stl": path for name, path in paths.items()})
+
+
+def test_mold_existing_model_golden_path(monkeypatch, client):
+    model_id, path = storage.new_model_dir()
+    (path / "model.stl").write_bytes(b"solid fake\nendsolid fake\n")
+    monkeypatch.setattr(mold, "make_mold", _fake_make_mold)
+
+    resp = client.post(f"/models/{model_id}/mold", json={})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["model_id"] != model_id
+    assert body["download_url"] == f"/models/{body['model_id']}/mold.zip"
+
+    zip_resp = client.get(body["download_url"])
+    assert zip_resp.status_code == 200
+    assert zip_resp.headers["content-type"] == "application/zip"
+    assert body["repaired_hole_ids"] == []
+
+
+def test_mold_existing_model_surfaces_repaired_hole_ids(monkeypatch, client):
+    model_id, path = storage.new_model_dir()
+    (path / "model.stl").write_bytes(b"solid fake\nendsolid fake\n")
+
+    def _fake_make_mold_with_repair(input_path, output_dir, **kwargs):
+        result = _fake_make_mold(input_path, output_dir, **kwargs)
+        return MoldResult(**{**vars(result), "repaired_hole_ids": [0, 2]})
+
+    monkeypatch.setattr(mold, "make_mold", _fake_make_mold_with_repair)
+
+    resp = client.post(f"/models/{model_id}/mold", json={})
+    assert resp.status_code == 200
+    assert resp.json()["repaired_hole_ids"] == [0, 2]
+
+
+def test_mold_existing_model_direct_cast(monkeypatch, client):
+    model_id, path = storage.new_model_dir()
+    (path / "model.stl").write_bytes(b"solid fake\nendsolid fake\n")
+    monkeypatch.setattr(mold, "make_mold", _fake_make_mold)
+
+    resp = client.post(f"/models/{model_id}/mold", json={"mode": "direct_cast"})
+    assert resp.status_code == 200
+    body = resp.json()
+
+    zip_resp = client.get(body["download_url"])
+    assert zip_resp.status_code == 200
+    assert zip_resp.headers["content-type"] == "application/zip"
+
+
+def test_mold_existing_model_form_fitting(monkeypatch, client):
+    model_id, path = storage.new_model_dir()
+    (path / "model.stl").write_bytes(b"solid fake\nendsolid fake\n")
+    monkeypatch.setattr(mold, "make_mold", _fake_make_mold)
+
+    resp = client.post(f"/models/{model_id}/mold", json={"mode": "form_fitting"})
+    assert resp.status_code == 200
+    body = resp.json()
+
+    zip_resp = client.get(body["download_url"])
+    assert zip_resp.status_code == 200
+    assert zip_resp.headers["content-type"] == "application/zip"
+
+
+def test_mold_existing_model_hollow_cast(monkeypatch, client):
+    model_id, path = storage.new_model_dir()
+    (path / "model.stl").write_bytes(b"solid fake\nendsolid fake\n")
+    monkeypatch.setattr(mold, "make_mold", _fake_make_mold)
+
+    resp = client.post(f"/models/{model_id}/mold", json={"mode": "hollow_cast"})
+    assert resp.status_code == 200
+    body = resp.json()
+
+    zip_resp = client.get(body["download_url"])
+    assert zip_resp.status_code == 200
+    assert zip_resp.headers["content-type"] == "application/zip"
+
+
+def test_mold_missing_model_returns_404(client):
+    resp = client.post("/models/does-not-exist/mold", json={})
+    assert resp.status_code == 404
+
+
+def test_mold_bad_param_returns_422(monkeypatch, client):
+    model_id, path = storage.new_model_dir()
+    (path / "model.stl").write_bytes(b"solid fake\nendsolid fake\n")
+
+    def failing_make_mold(*args, **kwargs):
+        raise mold.MoldError("resulting mold would be 999.0mm on its largest side, exceeding MAX_MOLD_DIMENSION_MM=300")
+
+    monkeypatch.setattr(mold, "make_mold", failing_make_mold)
+    resp = client.post(f"/models/{model_id}/mold", json={"clearance_mm": 500.0})
+    assert resp.status_code == 422
+
+
+def test_mold_oversized_pour_hole_returns_422(monkeypatch, client):
+    """FR-6/_add_pour_holes's cavity-footprint guard (make_mold.py) surfaces as a 422, not a 503."""
+    model_id, path = storage.new_model_dir()
+    (path / "model.stl").write_bytes(b"solid fake\nendsolid fake\n")
+
+    def failing_make_mold(*args, **kwargs):
+        raise mold.MoldError(
+            "sprue_diameter_mm/vent_diameter_mm (10.0/4.0mm) must be smaller than the cavity's own "
+            "footprint (1.00x1.00mm) -- a hole this large relative to the model would punch away the "
+            "mold's entire ceiling instead of leaving a working pour hole"
+        )
+
+    monkeypatch.setattr(mold, "make_mold", failing_make_mold)
+    resp = client.post(f"/models/{model_id}/mold", json={"mode": "direct_cast"})
+    assert resp.status_code == 422
+
+
+def test_mold_blender_failure_returns_503(monkeypatch, client):
+    model_id, path = storage.new_model_dir()
+    (path / "model.stl").write_bytes(b"solid fake\nendsolid fake\n")
+
+    def failing_make_mold(*args, **kwargs):
+        raise mold.MoldError("blender binary not found on PATH")
+
+    monkeypatch.setattr(mold, "make_mold", failing_make_mold)
+    resp = client.post(f"/models/{model_id}/mold", json={})
+    assert resp.status_code == 503
+
+
+def test_mold_zip_missing_returns_404(client):
+    model_id, _path = storage.new_model_dir()
+    resp = client.get(f"/models/{model_id}/mold.zip")
+    assert resp.status_code == 404
+
+
+def test_mold_upload_golden_path(monkeypatch, client):
+    monkeypatch.setattr(mold, "make_mold", _fake_make_mold)
+
+    resp = client.post(
+        "/mold",
+        files={"file": ("uploaded.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/zip"
+    assert resp.headers["x-model-id"]
+    assert resp.headers["x-repaired-hole-ids"] == ""
+
+
+def test_mold_upload_surfaces_repaired_hole_ids_header(monkeypatch, client):
+    def _fake_make_mold_with_repair(input_path, output_dir, **kwargs):
+        result = _fake_make_mold(input_path, output_dir, **kwargs)
+        return MoldResult(**{**vars(result), "repaired_hole_ids": [1]})
+
+    monkeypatch.setattr(mold, "make_mold", _fake_make_mold_with_repair)
+
+    resp = client.post(
+        "/mold",
+        files={"file": ("uploaded.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["x-repaired-hole-ids"] == "1"
+
+
+def test_mold_upload_rejects_unsupported_extension(client):
+    resp = client.post(
+        "/mold",
+        files={"file": ("uploaded.txt", b"not a mesh", "text/plain")},
+    )
+    assert resp.status_code == 422
+
+
+def test_mold_upload_direct_cast(monkeypatch, client):
+    monkeypatch.setattr(mold, "make_mold", _fake_make_mold)
+
+    resp = client.post(
+        "/mold",
+        files={"file": ("uploaded.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
+        data={"mode": "direct_cast"},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/zip"
+
+
+def test_mold_upload_form_fitting(monkeypatch, client):
+    monkeypatch.setattr(mold, "make_mold", _fake_make_mold)
+
+    resp = client.post(
+        "/mold",
+        files={"file": ("uploaded.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
+        data={"mode": "form_fitting"},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/zip"
+
+
+def test_mold_upload_hollow_cast(monkeypatch, client):
+    monkeypatch.setattr(mold, "make_mold", _fake_make_mold)
+
+    resp = client.post(
+        "/mold",
+        files={"file": ("uploaded.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
+        data={"mode": "hollow_cast"},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/zip"
+
+
+def test_mold_upload_rejects_bad_mode(client):
+    resp = client.post(
+        "/mold",
+        files={"file": ("uploaded.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
+        data={"mode": "not_a_real_mode"},
+    )
+    assert resp.status_code == 422
+
+
+def test_mold_existing_model_forwards_parting_axis_and_offset(monkeypatch, client):
+    """FR-6: parting_axis/parting_offset_mm from the request body reach mold.make_mold() unchanged."""
+    model_id, path = storage.new_model_dir()
+    (path / "model.stl").write_bytes(b"solid fake\nendsolid fake\n")
+    seen_kwargs = {}
+
+    def _recording_make_mold(input_path, output_dir, **kwargs):
+        seen_kwargs.update(kwargs)
+        return _fake_make_mold(input_path, output_dir, **kwargs)
+
+    monkeypatch.setattr(mold, "make_mold", _recording_make_mold)
+
+    resp = client.post(
+        f"/models/{model_id}/mold",
+        json={"mode": "direct_cast", "parting_axis": "x", "parting_offset_mm": 0.2},
+    )
+    assert resp.status_code == 200
+    assert seen_kwargs["parting_axis"] == "x"
+    assert seen_kwargs["parting_offset_mm"] == 0.2
+    # material_density_g_per_cm3 is popped out before reaching make_mold() -
+    # the Blender subprocess has no reason to know about density (ADR 0010).
+    assert "material_density_g_per_cm3" not in seen_kwargs
+
+
+def test_mold_existing_model_reports_cavity_volume_and_estimated_mass(monkeypatch, client):
+    """FR-8: cavity_volume_cm3 always comes back, estimated_cast_mass_g is volume * density when given."""
+    model_id, path = storage.new_model_dir()
+    (path / "model.stl").write_bytes(b"solid fake\nendsolid fake\n")
+
+    def _fake_make_mold_with_volume(input_path, output_dir, **kwargs):
+        result = _fake_make_mold(input_path, output_dir, **kwargs)
+        return MoldResult(**{**vars(result), "cavity_volume_cm3": 2.0})
+
+    monkeypatch.setattr(mold, "make_mold", _fake_make_mold_with_volume)
+
+    resp = client.post(
+        f"/models/{model_id}/mold",
+        json={"mode": "direct_cast", "material_density_g_per_cm3": 1.5},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["cavity_volume_cm3"] == 2.0
+    assert body["estimated_cast_mass_g"] == pytest.approx(3.0)
+
+
+def test_mold_existing_model_without_density_has_no_estimated_mass(monkeypatch, client):
+    model_id, path = storage.new_model_dir()
+    (path / "model.stl").write_bytes(b"solid fake\nendsolid fake\n")
+
+    def _fake_make_mold_with_volume(input_path, output_dir, **kwargs):
+        result = _fake_make_mold(input_path, output_dir, **kwargs)
+        return MoldResult(**{**vars(result), "cavity_volume_cm3": 2.0})
+
+    monkeypatch.setattr(mold, "make_mold", _fake_make_mold_with_volume)
+
+    resp = client.post(f"/models/{model_id}/mold", json={"mode": "direct_cast"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["cavity_volume_cm3"] == 2.0
+    assert body["estimated_cast_mass_g"] is None
+
+
+def test_mold_upload_reports_cavity_volume_and_mass_headers(monkeypatch, client):
+    def _fake_make_mold_with_volume(input_path, output_dir, **kwargs):
+        result = _fake_make_mold(input_path, output_dir, **kwargs)
+        return MoldResult(**{**vars(result), "cavity_volume_cm3": 2.0})
+
+    monkeypatch.setattr(mold, "make_mold", _fake_make_mold_with_volume)
+
+    resp = client.post(
+        "/mold",
+        files={"file": ("uploaded.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
+        data={"mode": "direct_cast", "material_density_g_per_cm3": "1.5"},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["x-cavity-volume-cm3"] == "2.0"
+    assert resp.headers["x-estimated-cast-mass-g"] == "3.0"
+
+
+def test_mold_upload_without_density_has_no_mass_header(monkeypatch, client):
+    def _fake_make_mold_with_volume(input_path, output_dir, **kwargs):
+        result = _fake_make_mold(input_path, output_dir, **kwargs)
+        return MoldResult(**{**vars(result), "cavity_volume_cm3": 2.0})
+
+    monkeypatch.setattr(mold, "make_mold", _fake_make_mold_with_volume)
+
+    resp = client.post(
+        "/mold",
+        files={"file": ("uploaded.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
+        data={"mode": "direct_cast"},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["x-cavity-volume-cm3"] == "2.0"
+    assert "x-estimated-cast-mass-g" not in resp.headers
+
+
+def _fake_draft_report(releasable=True, problem_islands=None):
+    return DraftReport(
+        source_path="model.stl",
+        pull_axis="z",
+        parting_coordinate=0.5,
+        min_draft_angle_deg=2.0,
+        releasable=releasable,
+        problem_islands=problem_islands or [],
+    )
+
+
+def test_mold_existing_model_direct_cast_surfaces_draft_check(monkeypatch, client):
+    model_id, path = storage.new_model_dir()
+    (path / "model.stl").write_bytes(b"solid fake\nendsolid fake\n")
+
+    island = ProblemFaceIsland(
+        id=0,
+        face_indices=[0, 1],
+        centroid=(0.5, 0.5, 0.5),
+        face_count=2,
+        min_draft_angle_deg=-10.0,
+        classification="undercut",
+    )
+
+    def _fake_make_mold_with_draft(input_path, output_dir, **kwargs):
+        result = _fake_make_mold(input_path, output_dir, **kwargs)
+        return MoldResult(
+            **{**vars(result), "draft_check": _fake_draft_report(releasable=False, problem_islands=[island])}
+        )
+
+    monkeypatch.setattr(mold, "make_mold", _fake_make_mold_with_draft)
+
+    resp = client.post(f"/models/{model_id}/mold", json={"mode": "direct_cast"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["draft_check"] == {"releasable": False, "problem_island_count": 1}
+
+
+def test_mold_existing_model_silicone_block_has_no_draft_check(monkeypatch, client):
+    model_id, path = storage.new_model_dir()
+    (path / "model.stl").write_bytes(b"solid fake\nendsolid fake\n")
+    monkeypatch.setattr(mold, "make_mold", _fake_make_mold)
+
+    resp = client.post(f"/models/{model_id}/mold", json={})
+    assert resp.status_code == 200
+    assert resp.json()["draft_check"] is None
+
+
+def test_mold_upload_direct_cast_surfaces_draft_headers(monkeypatch, client):
+    def _fake_make_mold_with_draft(input_path, output_dir, **kwargs):
+        result = _fake_make_mold(input_path, output_dir, **kwargs)
+        return MoldResult(**{**vars(result), "draft_check": _fake_draft_report(releasable=True)})
+
+    monkeypatch.setattr(mold, "make_mold", _fake_make_mold_with_draft)
+
+    resp = client.post(
+        "/mold",
+        files={"file": ("uploaded.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
+        data={"mode": "direct_cast"},
+    )
+    assert resp.status_code == 200
+    assert resp.headers["x-draft-releasable"] == "true"
+    assert resp.headers["x-draft-problem-island-count"] == "0"
+
+
+def test_mold_upload_silicone_block_has_no_draft_headers(monkeypatch, client):
+    monkeypatch.setattr(mold, "make_mold", _fake_make_mold)
+
+    resp = client.post(
+        "/mold",
+        files={"file": ("uploaded.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
+    )
+    assert resp.status_code == 200
+    assert "x-draft-releasable" not in resp.headers
+
+
+def test_draft_check_golden_path(monkeypatch, client):
+    model_id, path = storage.new_model_dir()
+    (path / "model.stl").write_bytes(b"solid fake\nendsolid fake\n")
+
+    island = ProblemFaceIsland(
+        id=0,
+        face_indices=[4, 5],
+        centroid=(0.5, 0.5, 0.5),
+        face_count=2,
+        min_draft_angle_deg=0.0,
+        classification="insufficient_draft",
+    )
+    monkeypatch.setattr(
+        main.draft_analysis,
+        "analyze_draft",
+        lambda *a, **kw: _fake_draft_report(releasable=False, problem_islands=[island]),
+    )
+
+    resp = client.post(f"/models/{model_id}/mold/draft-check", json={})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["releasable"] is False
+    assert len(body["problem_islands"]) == 1
+    assert body["problem_islands"][0]["classification"] == "insufficient_draft"
+
+
+def test_draft_check_missing_model_returns_404(client):
+    resp = client.post("/models/does-not-exist/mold/draft-check", json={})
+    assert resp.status_code == 404
+
+
+def test_draft_check_blender_failure_returns_503(monkeypatch, client):
+    model_id, path = storage.new_model_dir()
+    (path / "model.stl").write_bytes(b"solid fake\nendsolid fake\n")
+
+    def failing_analyze(*args, **kwargs):
+        raise draft_analysis.DraftAnalysisError("blender binary not found on PATH")
+
+    monkeypatch.setattr(main.draft_analysis, "analyze_draft", failing_analyze)
+    resp = client.post(f"/models/{model_id}/mold/draft-check", json={})
+    assert resp.status_code == 503
+
+
+def test_draft_check_rejects_bad_pull_axis(client):
+    model_id, path = storage.new_model_dir()
+    (path / "model.stl").write_bytes(b"solid fake\nendsolid fake\n")
+
+    resp = client.post(f"/models/{model_id}/mold/draft-check", json={"pull_axis": "w"})
+    assert resp.status_code == 422
 
 
 def _fake_watertight_report(holes=None, is_watertight=False):
