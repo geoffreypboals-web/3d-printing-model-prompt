@@ -161,6 +161,26 @@ a future change adds a new place that consumes `hole.centroid`,
 `island.centroid`, or `bounding_box` from the API, route it through those
 same helpers first.
 
+## A `.3dm` upload fails with "No module named 'rhino3dm'" or "Failed to import .3dm file"
+
+`.3dm` files are read inside Blender's own Python by the vendored
+`blender_scripts/vendor/rhino3dm_reader/`, which imports the `rhino3dm`
+package. The Docker image installs it into the system Python Blender uses
+(`Dockerfile`, `pip install --break-system-packages rhino3dm`). Running
+natively, install it into whichever Python your Blender runs (for a
+distro-packaged Blender, usually `/usr/bin/python3 -m pip install rhino3dm`).
+The reader also needs Blender 4.1+ (`Mesh.from_pydata(..., shade_flat=...)`,
+see the vendor `NOTICE.md`).
+
+## CI "lint-and-test" job is red on `ruff check` / `black --check`
+
+Since the vendored `.3dm` reader landed (2026-09-09), ruff and black also
+scan `src/threedprompt/blender_scripts/vendor/`, third-party code that
+doesn't follow this repo's style (101 ruff errors). The fix — exclude the
+vendor directory in `pyproject.toml` and switch four `str, Enum` classes in
+`models.py` to `StrEnum` — is on the unmerged
+`chore/ci-vendor-lint-and-archive-tools` branch.
+
 ## Backups & data durability
 
 `OUTPUT_DIR` (a plain directory, `./output` by default / a Docker named

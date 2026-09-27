@@ -6,6 +6,21 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ## [Unreleased]
 
+### Docs (2026-09-27 docs-vs-code review)
+
+- Rewrote `GettingStarted.md` and `Requirements.md`, which still described
+  an empty repo; README now covers `.3dm` input, `quad_target_faces`, the
+  vendored import_3dm/rhino3dm licenses, and the known red CI lint job.
+
+### Added (Rhino .3dm input + QuadriFlow retopology, 2026-09-09)
+
+- `.3dm` uploads for `/thicken`, `/mold` and `/watertight/upload`, read
+  inside Blender by a vendored MIT copy of import_3dm v0.0.18
+  (`blender_scripts/vendor/rhino3dm_reader/`); the Docker image installs
+  `rhino3dm` for Blender's Python. Rhino units are converted to mm.
+- Optional `quad_target_faces` on both thicken endpoints (QuadriFlow
+  retopology after shelling).
+
 ### Added (geometry-aware vent placement - Phase 7 of the mold research plan)
 
 - Vent-hole placement (all four modes) now detects a real trapped-air

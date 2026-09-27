@@ -61,7 +61,7 @@ this service generated, in millimeters:
   it by the requested amount.
 
 `POST /thicken` does the same mesh-shelling for an arbitrary uploaded
-STL/OBJ file that this service didn't generate - useful for any file you
+STL, OBJ, or Rhino `.3dm` file that this service didn't generate - useful for any file you
 already have. Unlike the other endpoints, `POST /thicken` returns the
 thickened **STL file itself** directly (not JSON) - it's meant to be a
 single round trip: load a file, modify it, get the modified file back. The
@@ -71,6 +71,22 @@ re-download the same result later via `GET /models/{model_id}/download`.
 
 Either way, thickening produces a *new* model rather than overwriting the
 original.
+
+Optional `quad_target_faces` (default `0` = off, max 1,000,000; JSON field
+or form field) retopologizes the shelled mesh into roughly that many
+quad-dominant faces via Blender's QuadriFlow - a topology/cosmetic pass,
+ignored on the regenerate-from-source path. Pick a target above the mesh's
+natural face count; too low a target can leave it non-watertight even
+after the repair pass that runs afterwards.
+
+**Rhino `.3dm` input:** `.3dm` files are read inside headless Blender by a
+vendored copy of the MIT-licensed
+[import_3dm](https://github.com/jesterKing/import_3dm) converter
+(`src/threedprompt/blender_scripts/vendor/rhino3dm_reader/`, see its
+`NOTICE.md`), which needs the `rhino3dm` Python package installed into
+the Python that Blender runs (the Docker image does this). Rhino units are
+converted to millimeters. The browser UI's file pickers don't offer `.3dm`
+yet - use the API (`/thicken`, `/mold`, `/watertight/upload`).
 
 ## Mold generation
 
@@ -285,7 +301,7 @@ ambiguous), click a marker or its row in the side panel to pick which to
 close, then repair and download. The underlying API:
 
 1. `POST /watertight/upload` - upload a mesh (any of
-   `.stl .obj .ply .glb .gltf .fbx`), get back a `model_id`.
+   `.stl .obj .ply .glb .gltf .fbx .3dm`), get back a `model_id`.
 2. `POST /models/{model_id}/analyze` - runs the check, returns
    `is_watertight`, every `holes[]` entry's classification/confidence/
    reason, any `flipped_normal_islands[]`, and a `viewer_glb_url` for the
@@ -313,10 +329,10 @@ LLM/ML call.
 | POST   | `/generate`                   | `{"prompt": "...", "wall_thickness_mm": 3.0}` -> JSON w/ model_id       |
 | GET    | `/models/{model_id}/download` | Download the STL                                                        |
 | POST   | `/models/{model_id}/thicken`  | `{"amount_mm": 1.5}` -> JSON w/ new model_id (see above)                 |
-| POST   | `/thicken`                    | multipart upload (`file`, `amount_mm`) -> **the thickened STL file**     |
+| POST   | `/thicken`                    | multipart upload (`file` .stl/.obj/.3dm, `amount_mm`, optional `quad_target_faces`) -> **the thickened STL file** |
 | POST   | `/models/{model_id}/mold`     | Mold params incl. `mode` (all optional) -> JSON w/ new model_id, `download_url` for the zip |
 | GET    | `/models/{model_id}/mold.zip` | Download the generated mold STL parts as one zip                        |
-| POST   | `/mold`                       | multipart upload (`file`, mold params incl. `mode`) -> **the STL parts as one zip** |
+| POST   | `/mold`                       | multipart upload (`file` .stl/.obj/.3dm, mold params incl. `mode`) -> **the STL parts as one zip** |
 | POST   | `/models/{model_id}/mold/draft-check` | `{"pull_axis": "z", "min_draft_angle_deg": 2.0}` -> JSON draft/undercut report, no files |
 | POST   | `/watertight/upload`          | multipart upload (`file`) -> JSON w/ model_id                           |
 | POST   | `/models/{model_id}/analyze`  | Watertight check -> JSON report (holes, classifications, viewer URL)    |
@@ -423,7 +439,10 @@ docker run --rm -p 8000:8000 --env-file .env -v threedprompt_output:/app/output 
 ## Running locally without Docker
 
 Requires OpenSCAD and Blender installed and on `PATH` (or point
-`OPENSCAD_BINARY` / `BLENDER_BINARY` at their full paths).
+`OPENSCAD_BINARY` / `BLENDER_BINARY` at their full paths). Watertight and
+mold features also need `numpy` available to Blender's Python, and `.3dm`
+input needs `rhino3dm` there too (e.g. `python3 -m pip install rhino3dm`
+for the system Python a distro-packaged Blender uses).
 
 ```bash
 cd /home/user/3d-printing-model-prompt
@@ -435,8 +454,15 @@ uvicorn threedprompt.main:app --reload
 ```
 
 Run the tests: `pytest` (all CAD/LLM calls are mocked, so this needs neither
-OpenSCAD/Blender nor a running LLM). Lint/format: `ruff check src tests` and
+OpenSCAD/Blender nor a running LLM; the `*_integration` tests are skipped
+unless a real Blender is on `PATH`). Lint/format: `ruff check src tests` and
 `black src tests`.
+
+CI (`.github/workflows/ci.yml`) runs ruff, black, pytest and a Docker build
+on every push/PR. **Known issue (2026-09-27):** the lint job is red on `main`
+because ruff/black also scan the vendored `rhino3dm_reader` code; the fix
+(exclude it in `pyproject.toml` + 4 `StrEnum` updates) is on the unmerged
+`chore/ci-vendor-lint-and-archive-tools` branch.
 
 ## AI/LLM backend
 
@@ -461,6 +487,8 @@ This project is intended to be open source (CLAUDE.md rule 7), MIT licensed
 | FastAPI, Uvicorn, Pydantic, Requests | MIT/BSD | permissive |
 | `anthropic` (Python SDK) | MIT | only used if `LLM_PROVIDER=claude` |
 | three.js r0.160.0 (vendored, `src/threedprompt/static/vendor/three/`) | MIT | watertight viewer; vendored not CDN-loaded, per rule 4 |
+| import_3dm v0.0.18 reader (vendored, `src/threedprompt/blender_scripts/vendor/rhino3dm_reader/`) | MIT | `.3dm` import inside Blender; license + `NOTICE.md` kept alongside |
+| `rhino3dm` (pip, installed into the image's system Python for Blender) | MIT | only needed for `.3dm` input |
 | OpenSCAD | GPL-2.0 | invoked as an external CLI process (subprocess), not linked into this codebase - GPL applies to OpenSCAD itself, not to this project |
 | Blender | GPL-3.0 | same: invoked as an external headless process, not linked in |
 
@@ -486,4 +514,5 @@ Early stage - not yet announced for outside contributions, so there's no
 `CONTRIBUTING.md` yet (rule 19). See `CHANGELOG.md` for what's shipped and
 `docs/adr/` for the reasoning behind the OpenSCAD/Blender split, the hybrid
 classifier, the wall-thickness strategy, the watertight hole-detection/
-repair feature, and the mold-generation feature.
+repair feature, and the mold-generation feature. `GettingStarted.md` is the
+short quick start; `Requirements.md` tracks what's built vs. open.
