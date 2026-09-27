@@ -65,5 +65,25 @@ API opt-in (`LLM_PROVIDER=claude`). Sibling suite projects
    cruder Blender geometry than a hosted model (documented tradeoff, see
    README "Known limitation").
 
+## Considered and not taken
+
+- **FORGE: CAD Precision Modelling in Blender** (RenderCraftStudio, paid
+  Superhive/Gumroad add-on, GPL, Blender 4.2–5.0; reviewed 2026-09-27).
+  Not integrated:
+  - It is an interactive viewport tool with no documented scripting API,
+    so the headless Blender subprocess can't drive it.
+  - It needs Blender 4.2+, but the Docker image's Debian bookworm Blender
+    is 3.4.
+  - It is paid, so it can't ship in this MIT repo or image (CLAUDE.md
+    rule 7).
+  - The FreeCAD backend already covers STEP import/export and solid
+    healing for free.
+  - It doesn't fill the one real gap either: it models new CAD geometry
+    and doesn't recover fillets or curves from an existing mesh (see
+    `mesh_to_step`).
+
+  Reasonable as a personal hand-modelling tool (e.g. toolchanger parts);
+  CAD Sketcher (free, GPL) is the open alternative to try first.
+
 See `Project-Audit-Report.md` for the dated audit log (its 2026-08-17
 entry predates any code) and `CHANGELOG.md` for shipped detail.
