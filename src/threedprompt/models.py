@@ -16,20 +16,20 @@ Troubleshooting:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 
-class Complexity(str, Enum):
+class Complexity(StrEnum):
     """Which backend a prompt should be routed to."""
 
     SIMPLE = "simple"
     COMPLEX = "complex"
 
 
-class ClassificationMethod(str, Enum):
+class ClassificationMethod(StrEnum):
     """Which stage of the hybrid classifier produced the final label."""
 
     HEURISTIC = "heuristic"
@@ -47,7 +47,7 @@ class ClassificationResult:
     reasoning: str
 
 
-class Backend(str, Enum):
+class Backend(StrEnum):
     """Which generation engine actually produced a model."""
 
     OPENSCAD = "openscad"
@@ -285,7 +285,7 @@ class HealthResponse(BaseModel):
 # thickness. See docs/adr/0004-watertight-hole-detection-and-repair.md.
 
 
-class HoleClassification(str, Enum):
+class HoleClassification(StrEnum):
     """Verdict watertight.py's heuristic assigns to one detected hole."""
 
     INTENTIONAL_OPENING = "intentional_opening"

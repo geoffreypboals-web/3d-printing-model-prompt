@@ -12,6 +12,9 @@ where = ["src"]
 [tool.ruff]
 line-length = 120
 target-version = "py311"
+# Vendored third-party code (Blender addon, upstream license/style choices we
+# don't own) -- lint our own code, not a pristine copy of someone else's.
+extend-exclude = ["src/threedprompt/blender_scripts/vendor"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -19,6 +22,7 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.black]
 line-length = 120
 target-version = ["py311"]
+extend-exclude = "src/threedprompt/blender_scripts/vendor/"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
