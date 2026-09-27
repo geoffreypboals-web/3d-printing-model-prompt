@@ -15,6 +15,10 @@ A FastAPI service (`src/threedprompt/`) that:
 - checks a model for holes/flipped normals and repairs chosen holes
   (`/watertight/upload`, `/models/{id}/analyze`, `/models/{id}/repair`,
   browser viewer at `/watertight.html`);
+- converts STEP to/from meshes and heals B-rep solids via FreeCAD
+  (`/step/upload`, `/models/{id}/export-step`, `/models/{id}/repair-solid`);
+- renders PNG thumbnails (`POST /thumbnail`) and suggests library tags
+  (`POST /tags/suggest`) for 3dPrinterWorkshopManager;
 - builds casting molds in four modes (`silicone_block`, `direct_cast`,
   `form_fitting`, `hollow_cast`) plus a draft/undercut check
   (`/models/{id}/mold`, `POST /mold`, `/models/{id}/mold/draft-check`).
@@ -25,7 +29,7 @@ takes `.ply .glb .gltf .fbx`).
 ## Prerequisites
 
 - Docker Desktop (Windows/Mac) or Docker Engine + Compose plugin (Linux).
-  The image bundles OpenSCAD and Blender.
+  The image bundles OpenSCAD, Blender and FreeCAD.
 - An LLM backend for `/generate`: the bundled Ollama container (default,
   free) or `LLM_PROVIDER=claude` with `ANTHROPIC_API_KEY` (paid). Thicken,
   watertight and mold features don't use the LLM.
@@ -65,8 +69,7 @@ cd /home/user/3d-printing-model-prompt && ruff check src tests && black --check 
 ```
 
 CAD/LLM calls are mocked; the `*_integration` tests only run when a real
-`blender` is on `PATH`. Note: ruff/black currently fail on `main` because
-they scan the vendored `.3dm` reader — see README "Running locally".
+`blender` is on `PATH`.
 
 ## Troubleshooting
 
