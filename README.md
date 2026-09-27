@@ -314,13 +314,21 @@ close, then repair and download. The underlying API:
    `.stl .obj .ply .glb .gltf .fbx .3dm`), get back a `model_id`.
 2. `POST /models/{model_id}/analyze` - runs the check, returns
    `is_watertight`, every `holes[]` entry's classification/confidence/
-   reason, any `flipped_normal_islands[]`, and a `viewer_glb_url` for the
-   3D preview.
+   reason, any `flipped_normal_islands[]`, `self_intersection_count`
+   (face pairs that cut through each other), `mesh_volume_cm3` (enclosed
+   volume, 1 unit = 1 mm; `null` when the mesh isn't watertight), and a
+   `viewer_glb_url` for the 3D preview.
 3. `POST /models/{model_id}/repair` with `{"hole_ids": [...]}` - closes
    just those holes (leaving the rest open), re-checks watertightness,
    and returns a fresh `download_url`. **Hole ids are positional** - they
    renumber whenever the file changes, including after closing some of
    them, so always use ids from the most recent `/analyze` response.
+   Or send `{"auto_repair": true}` instead of `hole_ids`: the model is
+   re-analyzed and only holes classified *likely defect* are closed (plus a
+   normals recalculation that fixes flipped regions); intentional and
+   ambiguous openings stay open and come back in `skipped_hole_ids`. If
+   there's nothing to fix, the file is left untouched and `changed` is
+   `false`. 3dPrinterWorkshopManager uses this for its intake check.
 
 A model generated via `POST /generate`, or thickened via
 `/models/{model_id}/thicken`, can be checked the same way - just call
@@ -404,7 +412,7 @@ farm-manager sibling repo's Library feature as `/thumbnail` above.
 | POST   | `/models/{model_id}/mold/draft-check` | `{"pull_axis": "z", "min_draft_angle_deg": 2.0}` -> JSON draft/undercut report, no files |
 | POST   | `/watertight/upload`          | multipart upload (`file`) -> JSON w/ model_id                           |
 | POST   | `/models/{model_id}/analyze`  | Watertight check -> JSON report (holes, classifications, viewer URL)    |
-| POST   | `/models/{model_id}/repair`   | `{"hole_ids": [0, 2]}` -> closes those holes, re-checks, new download   |
+| POST   | `/models/{model_id}/repair`   | `{"hole_ids": [0, 2]}` or `{"auto_repair": true}` -> closes holes, re-checks, new download |
 | GET    | `/models/{model_id}/viewer.glb` | Web-viewable GLB preview (produced by a prior analyze/repair call)   |
 | POST   | `/step/upload`                | multipart upload (`file`, `.step`/`.stp`) -> JSON w/ model_id (mesh)    |
 | POST   | `/models/{model_id}/export-step` | Converts the model's mesh to STEP -> **the STEP file**               |

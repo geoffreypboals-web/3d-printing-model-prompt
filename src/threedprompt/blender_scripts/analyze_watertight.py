@@ -7,8 +7,9 @@ Description: Runs *inside* Blender (`blender --background --python
     executable's own Python. Loads a mesh, finds every boundary-edge loop
     ("hole" — a location where the surface isn't watertight) and every
     connected island of faces whose winding disagrees with its neighbors
-    (the "inverted / wrinkle" defect the project owner described), and
-    writes a JSON report matching the WatertightReport shape in
+    (the "inverted / wrinkle" defect the project owner described), counts
+    self-intersecting face pairs, measures the enclosed volume (only
+    meaningful for a closed mesh), and writes a JSON report matching the WatertightReport shape in
     ../models.py. Classification of each hole (intentional opening vs.
     likely defect) is deliberately left blank here — classifier.py does
     that afterwards in plain Python so it stays unit-testable without a
@@ -37,6 +38,12 @@ Troubleshooting:
       global orientation to the one you expected) will still show as
       flipped relative to its neighbors — that's the intended, relative
       signal, not an absolute inside/outside judgement.
+    - mesh_volume_mm3 is null whenever the mesh isn't watertight: bmesh's
+      calc_volume() on an open surface returns a number that looks real
+      but isn't an enclosed volume, so it's deliberately not reported.
+    - self_intersection_count counts overlapping face *pairs* (BVH
+      overlap, faces sharing a vertex excluded - the same test Blender's
+      3D-Print Toolbox uses). Very large meshes make this the slowest step.
 """
 
 from __future__ import annotations
@@ -218,6 +225,46 @@ def find_flipped_normal_islands(bm):
     return result
 
 
+def count_self_intersections(bm) -> int:
+    """
+    Count pairs of faces that intersect each other without sharing a
+    vertex (a self-intersecting surface), via a BVH tree overlap test
+    against itself - the same check Blender's bundled 3D-Print Toolbox
+    add-on uses. Returns 0 for an empty mesh.
+
+    Args:
+        bm: A bmesh with lookup tables ensured.
+
+    Returns:
+        Number of intersecting face pairs.
+    """
+    from mathutils.bvhtree import BVHTree
+
+    if not bm.faces:
+        return 0
+    tree = BVHTree.FromBMesh(bm, epsilon=0.00001)
+    return len(tree.overlap(tree))
+
+
+def enclosed_volume_mm3(bm, is_watertight: bool) -> float | None:
+    """
+    Enclosed volume of the mesh in mm3 (1 Blender unit = 1 mm, the same
+    convention make_mold.py's _object_volume_mm3 uses), or None when the
+    mesh isn't watertight - an open surface has no enclosed volume, and
+    calc_volume() would still return a plausible-looking wrong number.
+
+    Args:
+        bm: The analyzed bmesh.
+        is_watertight: Result of this module's own watertight check.
+
+    Returns:
+        Absolute volume in mm3, or None.
+    """
+    if not is_watertight:
+        return None
+    return abs(bm.calc_volume(signed=True))
+
+
 def analyze(bpy, input_path: str, viewer_output: str | None = None) -> dict:
     """
     Build the full JSON-able report dict for one imported mesh file. If
@@ -256,9 +303,10 @@ def analyze(bpy, input_path: str, viewer_output: str | None = None) -> dict:
         "max": (max(xs), max(ys), max(zs)) if xs else (0.0, 0.0, 0.0),
     }
 
+    is_watertight = not holes and not nonmanifold_junction_edges
     report = {
         "source_path": input_path,
-        "is_watertight": not holes and not nonmanifold_junction_edges,
+        "is_watertight": is_watertight,
         "vertex_count": len(bm.verts),
         "face_count": len(bm.faces),
         "total_surface_area": total_surface_area,
@@ -266,6 +314,8 @@ def analyze(bpy, input_path: str, viewer_output: str | None = None) -> dict:
         "holes": holes,
         "flipped_normal_islands": flipped_islands,
         "nonmanifold_junction_edge_count": len(nonmanifold_junction_edges),
+        "self_intersection_count": count_self_intersections(bm),
+        "mesh_volume_mm3": enclosed_volume_mm3(bm, is_watertight),
         "blender_version": ".".join(str(v) for v in bpy.app.version),
     }
     bm.free()

@@ -38,6 +38,7 @@ from threedprompt.models import (
     ClassificationResult,
     Complexity,
     DraftReport,
+    FlippedNormalIsland,
     GenerationResult,
     Hole,
     HoleClassification,
@@ -818,6 +819,130 @@ def test_analyze_model_blender_failure_returns_503(monkeypatch, client):
     assert resp.status_code == 503
 
 
+def _fake_repair_mesh_recorder(calls):
+    """Build a repair_mesh stand-in that writes a fake repaired STL and records each call's hole ids."""
+
+    def fake_repair_mesh(
+        input_path, hole_ids, output_path, *, viewer_output=None, quad_target_faces=0, allow_normals_only=False
+    ):
+        from pathlib import Path
+
+        calls.append({"hole_ids": list(hole_ids), "allow_normals_only": allow_normals_only})
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).write_bytes(b"solid repaired\nendsolid repaired\n")
+        return RepairResult(
+            output_path=output_path,
+            closed_hole_ids=sorted(hole_ids),
+            is_watertight=True,
+            remaining_holes=[],
+            viewer_path=viewer_output or "",
+        )
+
+    return fake_repair_mesh
+
+
+def _hole(hole_id, classification):
+    return Hole(
+        id=hole_id,
+        vertex_indices=[0, 1, 2],
+        centroid=(0.0, 0.0, 1.0),
+        area=3.0,
+        perimeter=6.14,
+        planarity=1.0,
+        classification=classification,
+        confidence=0.9,
+        reason="test",
+    )
+
+
+def _upload_fake_model(client):
+    resp = client.post(
+        "/watertight/upload",
+        files={"file": ("model.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
+    )
+    return resp.json()["model_id"]
+
+
+def test_analyze_reports_volume_in_cm3_and_self_intersections(monkeypatch, client):
+    model_id = _upload_fake_model(client)
+    report = _fake_watertight_report(is_watertight=True)
+    report.mesh_volume_mm3 = 8000.0
+    report.self_intersection_count = 3
+    monkeypatch.setattr(watertight, "analyze_mesh", lambda *a, **k: report)
+
+    body = client.post(f"/models/{model_id}/analyze").json()
+    assert body["mesh_volume_cm3"] == 8.0
+    assert body["self_intersection_count"] == 3
+
+
+def test_analyze_volume_is_null_for_open_mesh(monkeypatch, client):
+    model_id = _upload_fake_model(client)
+    monkeypatch.setattr(watertight, "analyze_mesh", lambda *a, **k: _fake_watertight_report(is_watertight=False))
+
+    body = client.post(f"/models/{model_id}/analyze").json()
+    assert body["mesh_volume_cm3"] is None
+    assert body["self_intersection_count"] == 0
+
+
+def test_auto_repair_closes_only_likely_defects(monkeypatch, client):
+    model_id = _upload_fake_model(client)
+    holes = [
+        _hole(0, HoleClassification.LIKELY_DEFECT),
+        _hole(1, HoleClassification.INTENTIONAL_OPENING),
+        _hole(2, HoleClassification.AMBIGUOUS),
+        _hole(3, HoleClassification.LIKELY_DEFECT),
+    ]
+    monkeypatch.setattr(watertight, "analyze_mesh", lambda *a, **k: _fake_watertight_report(holes=holes))
+    calls = []
+    monkeypatch.setattr(watertight, "repair_mesh", _fake_repair_mesh_recorder(calls))
+
+    resp = client.post(f"/models/{model_id}/repair", json={"auto_repair": True})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert calls == [{"hole_ids": [0, 3], "allow_normals_only": True}]
+    assert body["closed_hole_ids"] == [0, 3]
+    assert body["skipped_hole_ids"] == [1, 2]
+    assert body["changed"] is True
+
+
+def test_auto_repair_leaves_an_open_cup_untouched(monkeypatch, client):
+    """A cup's mouth is an intentional opening: auto_repair must not close it or rewrite the file."""
+    model_id = _upload_fake_model(client)
+    holes = [_hole(0, HoleClassification.INTENTIONAL_OPENING)]
+    monkeypatch.setattr(watertight, "analyze_mesh", lambda *a, **k: _fake_watertight_report(holes=holes))
+    calls = []
+    monkeypatch.setattr(watertight, "repair_mesh", _fake_repair_mesh_recorder(calls))
+
+    resp = client.post(f"/models/{model_id}/repair", json={"auto_repair": True})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert calls == []
+    assert body["changed"] is False
+    assert body["closed_hole_ids"] == []
+    assert body["skipped_hole_ids"] == [0]
+
+
+def test_auto_repair_fixes_flipped_normals_without_holes(monkeypatch, client):
+    model_id = _upload_fake_model(client)
+    report = _fake_watertight_report(holes=[])
+    report.flipped_normal_islands = [
+        FlippedNormalIsland(id=0, face_indices=[1, 2], centroid=(0.0, 0.0, 0.0), face_count=2)
+    ]
+    monkeypatch.setattr(watertight, "analyze_mesh", lambda *a, **k: report)
+    calls = []
+    monkeypatch.setattr(watertight, "repair_mesh", _fake_repair_mesh_recorder(calls))
+
+    resp = client.post(f"/models/{model_id}/repair", json={"auto_repair": True})
+    assert resp.status_code == 200
+    assert calls == [{"hole_ids": [], "allow_normals_only": True}]
+
+
+def test_repair_rejects_hole_ids_together_with_auto_repair(client):
+    model_id = _upload_fake_model(client)
+    resp = client.post(f"/models/{model_id}/repair", json={"hole_ids": [0], "auto_repair": True})
+    assert resp.status_code == 422
+
+
 def test_repair_model_golden_path(monkeypatch, client):
     upload_resp = client.post(
         "/watertight/upload",
@@ -825,20 +950,7 @@ def test_repair_model_golden_path(monkeypatch, client):
     )
     model_id = upload_resp.json()["model_id"]
 
-    def fake_repair_mesh(input_path, hole_ids, output_path, *, viewer_output=None, quad_target_faces=0):
-        from pathlib import Path
-
-        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(output_path).write_bytes(b"solid repaired\nendsolid repaired\n")
-        return RepairResult(
-            output_path=output_path,
-            closed_hole_ids=hole_ids,
-            is_watertight=True,
-            remaining_holes=[],
-            viewer_path=viewer_output or "",
-        )
-
-    monkeypatch.setattr(watertight, "repair_mesh", fake_repair_mesh)
+    monkeypatch.setattr(watertight, "repair_mesh", _fake_repair_mesh_recorder([]))
     resp = client.post(f"/models/{model_id}/repair", json={"hole_ids": [0]})
     assert resp.status_code == 200
     body = resp.json()

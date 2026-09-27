@@ -6,6 +6,17 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ## [Unreleased]
 
+### Added (intake mesh check support, 2026-09-27)
+
+- `POST /models/{model_id}/analyze` now returns `self_intersection_count`
+  (BVH overlap of face pairs not sharing a vertex, as in Blender's 3D-Print
+  Toolbox) and `mesh_volume_cm3` (bmesh enclosed volume; `null` for a
+  non-watertight mesh).
+- `POST /models/{model_id}/repair` accepts `{"auto_repair": true}`: re-analyzes,
+  closes only `likely_defect` holes, recalculates normals (so flipped regions
+  are fixed even with no holes to close), reports `skipped_hole_ids` and
+  `changed`. `hole_ids` and `auto_repair` are mutually exclusive.
+
 ### Merged (2026-09-27)
 
 - `chore/ci-vendor-lint-and-archive-tools`: vendored `rhino3dm_reader`

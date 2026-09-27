@@ -38,6 +38,10 @@ API opt-in (`LLM_PROVIDER=claude`). Sibling suite projects
 - [x] `POST /thumbnail` (headless Blender PNG, STEP via FreeCAD) and
   `POST /tags/suggest` (LLM tag suggestions from filename/metadata text,
   heuristic fallback) for the 3dPrinterWorkshopManager library — ADR 0013.
+- [x] Intake-check support for 3dPrinterWorkshopManager (2026-09-27):
+  `/analyze` reports `mesh_volume_cm3` and `self_intersection_count`;
+  `/repair` accepts `auto_repair` (closes only likely-defect holes,
+  recalculates normals, leaves intentional openings open).
 - [x] Browser UI at `/`, interactive API docs at `/docs`, `GET /health`.
 - [x] Dockerfile (non-root user, OpenSCAD + Blender + FreeCAD + rhino3dm) and
   `docker-compose.yml` with a bundled Ollama service.
@@ -51,13 +55,6 @@ API opt-in (`LLM_PROVIDER=claude`). Sibling suite projects
 
 ## Open development tasks
 
-0. **Planned 2026-09-27 (for 3dPrinterWorkshopManager's intake check, its
-   Backlog item S4):** extend `POST /models/{model_id}/analyze` with
-   `mesh_volume_cm3` (bmesh `calc_volume`, only when watertight — feeds pricing)
-   and `self_intersection_count` (BVHTree overlap); add an `auto_repair` option
-   to `/repair` that closes only holes the heuristic classifies as likely
-   defects and recalculates normals, never intentional openings. Tests: golden
-   path plus an open cup that must stay open.
 1. Browser UI file pickers don't accept `.3dm` yet (API does).
 2. `.scratch_moldtest/` debug scripts are committed at the repo root —
    decide whether to keep them (and give them file headers) or remove

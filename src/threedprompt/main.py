@@ -90,6 +90,7 @@ from threedprompt.models import (
     GenerateResponse,
     HealthResponse,
     Hole,
+    HoleClassification,
     MoldRequest,
     MoldResponse,
     RepairRequest,
@@ -652,6 +653,8 @@ def analyze_model_watertightness(model_id: str) -> AnalyzeResponse:
         holes=[_hole_to_dict(h) for h in report.holes],
         flipped_normal_islands=[_island_to_dict(i) for i in report.flipped_normal_islands],
         nonmanifold_junction_edge_count=report.nonmanifold_junction_edge_count,
+        self_intersection_count=report.self_intersection_count,
+        mesh_volume_cm3=(report.mesh_volume_mm3 / 1000.0) if report.mesh_volume_mm3 is not None else None,
         blender_version=report.blender_version,
         viewer_glb_url=f"/models/{model_id}/viewer.glb" if report.viewer_path else None,
     )
@@ -664,6 +667,12 @@ def repair_model_holes(model_id: str, request: RepairRequest) -> RepairResponse:
     model_id) and re-check watertightness. Overwrites this model_id's
     STL in place (unlike /thicken, which always produces a new model_id)
     since a repair is a correction to the same model, not a variant.
+
+    With auto_repair=true (and no hole_ids), the model is re-analyzed and
+    only holes classified LIKELY_DEFECT are closed; intentional-looking and
+    ambiguous openings are left alone and listed in skipped_hole_ids. If
+    there's nothing to fix (no defect holes, no flipped-normal islands) the
+    file is left untouched and changed=false is returned.
     """
     try:
         source_path = storage.stl_path(model_id) if _has_stl(model_id) else _any_model_file(model_id)
@@ -671,13 +680,37 @@ def repair_model_holes(model_id: str, request: RepairRequest) -> RepairResponse:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     viewer_path = storage.model_dir(model_id) / _VIEWER_GLB_FILENAME
+    hole_ids = request.hole_ids
+    skipped_hole_ids: list[int] = []
+    if request.auto_repair:
+        try:
+            report = watertight.analyze_mesh(str(source_path))
+        except WatertightError as exc:
+            logger.error("Auto-repair analysis failed for model_id=%s: %s", model_id, exc)
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        hole_ids = [h.id for h in report.holes if h.classification == HoleClassification.LIKELY_DEFECT]
+        skipped_hole_ids = [h.id for h in report.holes if h.classification != HoleClassification.LIKELY_DEFECT]
+        if not hole_ids and not report.flipped_normal_islands:
+            logger.info("Auto-repair of model_id=%s: nothing to fix", model_id)
+            return RepairResponse(
+                model_id=model_id,
+                closed_hole_ids=[],
+                is_watertight=report.is_watertight,
+                remaining_holes=[_hole_to_dict(h) for h in report.holes],
+                viewer_glb_url=f"/models/{model_id}/viewer.glb" if viewer_path.is_file() else None,
+                download_url=f"/models/{model_id}/download",
+                changed=False,
+                skipped_hole_ids=skipped_hole_ids,
+            )
+
     try:
         result = watertight.repair_mesh(
             str(source_path),
-            request.hole_ids,
+            hole_ids,
             str(storage.model_dir(model_id) / "model.stl"),
             viewer_output=str(viewer_path),
             quad_target_faces=request.quad_target_faces,
+            allow_normals_only=request.auto_repair,
         )
     except WatertightError as exc:
         logger.error("Watertight repair failed for model_id=%s: %s", model_id, exc)
@@ -690,6 +723,7 @@ def repair_model_holes(model_id: str, request: RepairRequest) -> RepairResponse:
         remaining_holes=[_hole_to_dict(h) for h in result.remaining_holes],
         viewer_glb_url=f"/models/{model_id}/viewer.glb" if result.viewer_path else None,
         download_url=f"/models/{model_id}/download",
+        skipped_hole_ids=skipped_hole_ids,
     )
 
 

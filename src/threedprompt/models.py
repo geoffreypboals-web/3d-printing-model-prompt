@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Complexity(StrEnum):
@@ -368,6 +368,10 @@ class WatertightReport:
     holes: list[Hole] = field(default_factory=list)
     flipped_normal_islands: list[FlippedNormalIsland] = field(default_factory=list)
     nonmanifold_junction_edge_count: int = 0
+    self_intersection_count: int = 0
+    # Enclosed volume in mm3; None when the mesh isn't watertight (an open
+    # surface has no meaningful enclosed volume).
+    mesh_volume_mm3: float | None = None
     blender_version: str = ""
     viewer_path: str = ""
 
@@ -402,6 +406,12 @@ class AnalyzeResponse(BaseModel):
     holes: list[dict]
     flipped_normal_islands: list[dict]
     nonmanifold_junction_edge_count: int
+    self_intersection_count: int = Field(
+        0, description="Pairs of faces that intersect each other without sharing a vertex (0 = clean)."
+    )
+    mesh_volume_cm3: float | None = Field(
+        None, description="Enclosed volume in cm3 (1 unit = 1 mm). Null when the mesh isn't watertight."
+    )
     blender_version: str
     viewer_glb_url: str | None = None
 
@@ -409,7 +419,16 @@ class AnalyzeResponse(BaseModel):
 class RepairRequest(BaseModel):
     """POST /models/{model_id}/repair request body."""
 
-    hole_ids: list[int] = Field(..., min_length=1, description="Hole ids (from a prior /analyze) to close.")
+    hole_ids: list[int] = Field(
+        default_factory=list,
+        description="Hole ids (from a prior /analyze) to close. Required unless auto_repair is true.",
+    )
+    auto_repair: bool = Field(
+        False,
+        description="When true (and hole_ids is empty), re-analyze the model and close only holes the "
+        "heuristic classifies as likely defects, recalculating face normals across the mesh. "
+        "Likely-intentional and ambiguous openings are never closed.",
+    )
     quad_target_faces: int = Field(
         0,
         ge=0,
@@ -419,6 +438,15 @@ class RepairRequest(BaseModel):
         "Pick a value proportional to the mesh's real complexity: a target at or below its natural face "
         "count can leave it not watertight even with the repair pass that runs afterward.",
     )
+
+    @model_validator(mode="after")
+    def _hole_ids_or_auto(self) -> RepairRequest:
+        """Require exactly one selection mode: explicit hole_ids, or auto_repair."""
+        if self.auto_repair and self.hole_ids:
+            raise ValueError("pass either hole_ids or auto_repair=true, not both")
+        if not self.auto_repair and not self.hole_ids:
+            raise ValueError("hole_ids must list at least one hole id (or set auto_repair=true)")
+        return self
 
 
 class RepairResponse(BaseModel):
@@ -430,6 +458,11 @@ class RepairResponse(BaseModel):
     remaining_holes: list[dict]
     viewer_glb_url: str | None = None
     download_url: str
+    changed: bool = Field(True, description="False when auto_repair found nothing to fix and left the file untouched.")
+    skipped_hole_ids: list[int] = Field(
+        default_factory=list,
+        description="auto_repair only: holes left open because they look intentional or are ambiguous.",
+    )
 
 
 class UploadResponse(BaseModel):
