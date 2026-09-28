@@ -6,6 +6,41 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ## [Unreleased]
 
+### Added (intake mesh check support, 2026-09-27)
+
+- `POST /models/{model_id}/analyze` now returns `self_intersection_count`
+  (BVH overlap of face pairs not sharing a vertex, as in Blender's 3D-Print
+  Toolbox) and `mesh_volume_cm3` (bmesh enclosed volume; `null` for a
+  non-watertight mesh).
+- `POST /models/{model_id}/repair` accepts `{"auto_repair": true}`: re-analyzes,
+  closes only `likely_defect` holes, recalculates normals (so flipped regions
+  are fixed even with no holes to close), reports `skipped_hole_ids` and
+  `changed`. `hole_ids` and `auto_repair` are mutually exclusive.
+
+### Merged (2026-09-27)
+
+- `chore/ci-vendor-lint-and-archive-tools`: vendored `rhino3dm_reader`
+  excluded from ruff/black; four `str, Enum` classes -> `StrEnum`. CI lint
+  is green again.
+- `feature/freecad-backend`: FreeCAD backend, `/thumbnail`, `/tags/suggest`
+  (entries below). Its ADRs were renumbered 0005/0006 -> 0012/0013 to
+  avoid colliding with the mold ADRs that landed on `main` first.
+
+### Docs (2026-09-27 docs-vs-code review)
+
+- Rewrote `GettingStarted.md` and `Requirements.md`, which still described
+  an empty repo; README now covers `.3dm` input, `quad_target_faces`, the
+  vendored import_3dm/rhino3dm licenses, and the known red CI lint job.
+
+### Added (Rhino .3dm input + QuadriFlow retopology, 2026-09-09)
+
+- `.3dm` uploads for `/thicken`, `/mold` and `/watertight/upload`, read
+  inside Blender by a vendored MIT copy of import_3dm v0.0.18
+  (`blender_scripts/vendor/rhino3dm_reader/`); the Docker image installs
+  `rhino3dm` for Blender's Python. Rhino units are converted to mm.
+- Optional `quad_target_faces` on both thicken endpoints (QuadriFlow
+  retopology after shelling).
+
 ### Added (geometry-aware vent placement - Phase 7 of the mold research plan)
 
 - Vent-hole placement (all four modes) now detects a real trapped-air
@@ -170,6 +205,47 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
   design (why each half is built as its own open tray rather than
   bisecting a sealed box, keys vs. bolted flange, shared cavity size, and
   a subtle boolean-geometry gotcha found and fixed during development).
+
+### Added (thumbnail rendering)
+
+- `POST /thumbnail` - renders a square PNG thumbnail of an uploaded mesh
+  or STEP file via headless Blender (`thumbnail.py`,
+  `blender_scripts/render_thumbnail.py`): auto-framed orthographic
+  camera, Workbench-engine flat studio shading (no material/light setup
+  needed, fast enough to run per-file on demand). STEP/STP input is
+  first converted to a mesh via the FreeCAD backend's `step_to_mesh()`,
+  since Blender has no STEP importer. `.3mf` and `.amf` are deliberately
+  unsupported here - `.3mf` should use its own embedded slicer-preview
+  PNG instead (cheaper, more accurate) and `.amf` has no importer
+  anywhere in this pipeline. Built for the farm-manager sibling repo's
+  library scanner, which has no CAD tooling of its own - see
+  `docs/industry-tool-review-and-recommendations.md` #7 in that repo.
+- `THUMBNAIL_MAX_SIZE_PX` (default 2048) caps the requested render
+  resolution.
+
+### Added (FreeCAD backend: wall-thickness, STEP, solid healing)
+
+- FreeCAD (`freecad-python3` apt package, headless via `freecadcmd`) added
+  as a third CAD backend alongside OpenSCAD/Blender - Blender remains the
+  default/fallback for organic and mesh-only models; FreeCAD is tried
+  first only where it has a real advantage (solid B-rep operations).
+- `thickness.mesh_shell()` now tries FreeCAD's Part Thickness first for
+  `.stl` input, falling back to Blender's Solidify automatically if
+  FreeCAD is unavailable or the input isn't solid enough - no API change,
+  existing `/thicken` endpoints are unaffected.
+- `POST /step/upload`, `POST /models/{model_id}/export-step` - convert a
+  STEP solid to/from this service's mesh pipeline (a best-effort B-rep
+  wrap of the mesh, not true reverse-engineered parametric CAD).
+- `POST /models/{model_id}/repair-solid` - heals malformed B-rep topology
+  via OCCT's ShapeFix, a different class of repair than `/repair`'s
+  Blender-based open-boundary hole filling.
+- `GET /health` now reports `freecad_available` (doesn't affect
+  `status`/degraded - FreeCAD absence only disables its own endpoints).
+- `docs/adr/0012-freecad-third-cad-backend.md` records the decision and
+  the real semantic limitations found during development (Part Thickness
+  needs an opening face, unlike Blender's Solidify; `Part.export()` on a
+  bare shape silently omits all solid geometry - use `shape.exportStep()`;
+  STEP import only works via `Part.read()`, not `Part.insert`/`Import.*`).
 
 ### Added (watertight analysis/repair)
 

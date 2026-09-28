@@ -158,6 +158,8 @@ def _report_from_dict(d: dict) -> WatertightReport:
         holes=holes,
         flipped_normal_islands=islands,
         nonmanifold_junction_edge_count=d.get("nonmanifold_junction_edge_count", 0),
+        self_intersection_count=d.get("self_intersection_count", 0),
+        mesh_volume_mm3=d.get("mesh_volume_mm3"),
         blender_version=d.get("blender_version", ""),
     )
 
@@ -207,6 +209,7 @@ def repair_mesh(
     *,
     viewer_output: str | None = None,
     quad_target_faces: int = 0,
+    allow_normals_only: bool = False,
 ) -> RepairResult:
     """
     Close the given hole ids (as reported by a prior analyze_mesh() call
@@ -221,11 +224,17 @@ def repair_mesh(
     after hole-filling. Topology/cosmetic only -- doesn't affect
     watertightness, and every STL export re-triangulates regardless.
 
+    allow_normals_only (default False): permit an empty hole_ids list, in
+    which case no hole is closed but face normals are still recalculated
+    across the whole mesh (fixes flipped-normal islands on their own).
+    Used by /repair's auto_repair mode; explicit callers must still name
+    at least one hole.
+
     Raises WatertightError if Blender is missing, times out, a hole id
     doesn't exist on this file, or the output format is unsupported.
     """
     _validate_input(input_path)
-    if not hole_ids:
+    if not hole_ids and not allow_normals_only:
         raise WatertightError("repair_mesh() called with no hole_ids to close")
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     if viewer_output:

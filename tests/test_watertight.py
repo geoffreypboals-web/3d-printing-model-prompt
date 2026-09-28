@@ -130,6 +130,45 @@ def test_repair_mesh_requires_at_least_one_hole_id(tmp_path):
         repair_mesh(str(input_stl), [], str(tmp_path / "out.stl"))
 
 
+def test_repair_mesh_allows_normals_only_when_requested(monkeypatch, tmp_path):
+    """auto_repair's no-defect-holes-but-flipped-normals case: empty hole list, normals recalculated."""
+    monkeypatch.setattr(watertight.shutil, "which", _fake_which_blender)
+    report = dict(_FAKE_REPORT)
+    report["is_watertight"] = True
+    report["holes"] = []
+    seen = {}
+
+    def _fake_run(cmd, capture_output, text, timeout, check):
+        seen["hole_ids_arg"] = cmd[cmd.index("--hole-ids") + 1]
+        Path(cmd[cmd.index("--output") + 1]).write_bytes(b"solid fake\nendsolid fake\n")
+        Path(cmd[cmd.index("--report-output") + 1]).write_text(json.dumps(report))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(watertight.subprocess, "run", _fake_run)
+    input_stl = tmp_path / "model.stl"
+    input_stl.write_bytes(b"solid fake\nendsolid fake\n")
+
+    result = repair_mesh(str(input_stl), [], str(tmp_path / "out.stl"), allow_normals_only=True)
+
+    assert seen["hole_ids_arg"] == ""
+    assert result.closed_hole_ids == []
+
+
+def test_report_parses_volume_and_self_intersections():
+    report = dict(_FAKE_REPORT)
+    report["mesh_volume_mm3"] = 1234.5
+    report["self_intersection_count"] = 7
+    parsed = watertight._report_from_dict(report)
+    assert parsed.mesh_volume_mm3 == 1234.5
+    assert parsed.self_intersection_count == 7
+
+
+def test_report_defaults_when_old_blender_script_omits_new_fields():
+    parsed = watertight._report_from_dict(dict(_FAKE_REPORT))
+    assert parsed.mesh_volume_mm3 is None
+    assert parsed.self_intersection_count == 0
+
+
 def test_repair_mesh_golden_path(monkeypatch, tmp_path):
     monkeypatch.setattr(watertight.shutil, "which", _fake_which_blender)
 

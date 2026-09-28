@@ -11,8 +11,15 @@ Simple, mechanical parts (brackets, mounts, spacers, enclosures) are built
 with **[OpenSCAD](https://openscad.org/)**; complex, organic, or
 characterful shapes (creatures, figurines, freeform sculptures) are built
 with **[Blender](https://www.blender.org/)** running headless, which also
-powers wall-thickness shelling and watertight analysis/repair. An HTTP API
-in front decides which backend to use per request.
+powers watertight analysis/repair and remains the default/fallback for
+wall-thickness shelling. **[FreeCAD](https://www.freecad.org/)** running
+headless is a third backend, tried first for `.stl` wall-thickness
+shelling (a real solid B-rep result via Part Thickness, not just a
+thicker mesh) and for two capabilities Blender can't do at all: STEP
+import/export and solid healing (OCCT's ShapeFix) - see
+[STEP conversion & solid healing](#step-conversion--solid-healing) below
+and `docs/adr/0012-freecad-third-cad-backend.md`. An HTTP API in front
+decides which backend to use per request.
 
 **Browser UI**: once the service is running, open `http://localhost:8000/`
 in a browser for a simple page to generate a model from a prompt, pick a
@@ -56,12 +63,15 @@ this service generated, in millimeters:
   `wall_thickness` variable, that variable is bumped and the part is
   **re-rendered from source** - the cleanest result, still fully parametric,
   no LLM call.
-- Otherwise (a Blender-sourced model, or the source-based approach fails),
-  the mesh is loaded into headless Blender and a **Solidify modifier** shells
-  it by the requested amount.
+- Otherwise, for `.stl` input, headless **FreeCAD's Part Thickness**
+  operation is tried first, giving a real solid B-rep result rather than
+  a thicker mesh - falling back automatically to Blender's **Solidify
+  modifier** if FreeCAD is unavailable or the input isn't solid/manifold
+  enough for Part Thickness. Every other mesh format goes straight to
+  Blender. See `docs/adr/0012-freecad-third-cad-backend.md`.
 
 `POST /thicken` does the same mesh-shelling for an arbitrary uploaded
-STL/OBJ file that this service didn't generate - useful for any file you
+STL, OBJ, or Rhino `.3dm` file that this service didn't generate - useful for any file you
 already have. Unlike the other endpoints, `POST /thicken` returns the
 thickened **STL file itself** directly (not JSON) - it's meant to be a
 single round trip: load a file, modify it, get the modified file back. The
@@ -71,6 +81,22 @@ re-download the same result later via `GET /models/{model_id}/download`.
 
 Either way, thickening produces a *new* model rather than overwriting the
 original.
+
+Optional `quad_target_faces` (default `0` = off, max 1,000,000; JSON field
+or form field) retopologizes the shelled mesh into roughly that many
+quad-dominant faces via Blender's QuadriFlow - a topology/cosmetic pass,
+ignored on the regenerate-from-source path. Pick a target above the mesh's
+natural face count; too low a target can leave it non-watertight even
+after the repair pass that runs afterwards.
+
+**Rhino `.3dm` input:** `.3dm` files are read inside headless Blender by a
+vendored copy of the MIT-licensed
+[import_3dm](https://github.com/jesterKing/import_3dm) converter
+(`src/threedprompt/blender_scripts/vendor/rhino3dm_reader/`, see its
+`NOTICE.md`), which needs the `rhino3dm` Python package installed into
+the Python that Blender runs (the Docker image does this). Rhino units are
+converted to millimeters. The browser UI's file pickers don't offer `.3dm`
+yet - use the API (`/thicken`, `/mold`, `/watertight/upload`).
 
 ## Mold generation
 
@@ -285,16 +311,24 @@ ambiguous), click a marker or its row in the side panel to pick which to
 close, then repair and download. The underlying API:
 
 1. `POST /watertight/upload` - upload a mesh (any of
-   `.stl .obj .ply .glb .gltf .fbx`), get back a `model_id`.
+   `.stl .obj .ply .glb .gltf .fbx .3dm`), get back a `model_id`.
 2. `POST /models/{model_id}/analyze` - runs the check, returns
    `is_watertight`, every `holes[]` entry's classification/confidence/
-   reason, any `flipped_normal_islands[]`, and a `viewer_glb_url` for the
-   3D preview.
+   reason, any `flipped_normal_islands[]`, `self_intersection_count`
+   (face pairs that cut through each other), `mesh_volume_cm3` (enclosed
+   volume, 1 unit = 1 mm; `null` when the mesh isn't watertight), and a
+   `viewer_glb_url` for the 3D preview.
 3. `POST /models/{model_id}/repair` with `{"hole_ids": [...]}` - closes
    just those holes (leaving the rest open), re-checks watertightness,
    and returns a fresh `download_url`. **Hole ids are positional** - they
    renumber whenever the file changes, including after closing some of
    them, so always use ids from the most recent `/analyze` response.
+   Or send `{"auto_repair": true}` instead of `hole_ids`: the model is
+   re-analyzed and only holes classified *likely defect* are closed (plus a
+   normals recalculation that fixes flipped regions); intentional and
+   ambiguous openings stay open and come back in `skipped_hole_ids`. If
+   there's nothing to fix, the file is left untouched and `changed` is
+   `false`. 3dPrinterWorkshopManager uses this for its intake check.
 
 A model generated via `POST /generate`, or thickened via
 `/models/{model_id}/thicken`, can be checked the same way - just call
@@ -305,23 +339,86 @@ See `docs/adr/0004-watertight-hole-detection-and-repair.md` for how the
 classification heuristic works and why it's a heuristic rather than an
 LLM/ML call.
 
+## STEP conversion & solid healing
+
+Two FreeCAD-backed capabilities Blender can't provide at all:
+
+1. **STEP import/export** - `POST /step/upload` (multipart, `.step`/`.stp`)
+   converts an uploaded STEP solid into this service's mesh pipeline
+   (returns a `model_id` usable with every other endpoint);
+   `POST /models/{model_id}/export-step` converts a model's mesh back into
+   a STEP solid and returns the file directly. This is a best-effort B-rep
+   wrap of mesh triangles, not true reverse-engineered parametric CAD - a
+   flat face becomes one real STEP planar face, but there's no
+   curve/fillet recovery.
+2. **Solid healing** - `POST /models/{model_id}/repair-solid` runs OCCT's
+   ShapeFix to repair malformed B-rep topology (small gaps, invalid
+   edges/faces), overwriting the model's STL in place. This is a
+   **different class of repair** than `/repair` above: watertight repair
+   closes genuine missing patches in a mesh (an open boundary loop);
+   solid healing fixes a shape that's already "closed-looking" but
+   geometrically malformed (e.g. after a rough mesh-to-solid conversion or
+   a messy STEP import). Use `/repair` for a mesh with an actual hole,
+   `/repair-solid` for a solid that fails validity checks despite looking
+   closed.
+
+Both require FreeCAD (`freecad_available` in `GET /health`) - unlike
+Blender, FreeCAD isn't required for the service overall, so these two
+endpoints return `503` if it's unavailable while everything else keeps
+working. See `docs/adr/0012-freecad-third-cad-backend.md` for the real
+semantic limitations found integrating FreeCAD (STEP import only works
+via one specific API call; `Part.export()` on a bare shape silently omits
+all geometry; Part Thickness needs an "opening" face, unlike Solidify).
+
+## Thumbnails
+
+`POST /thumbnail` renders a square PNG thumbnail of an uploaded mesh or
+STEP file via headless Blender - an auto-framed orthographic camera and
+flat Workbench-engine shading, fast enough to run per file on demand
+rather than needing a pre-baked render pipeline. STEP/STP input is
+converted to a mesh via FreeCAD first (Blender has no STEP importer).
+`.3mf` isn't handled here on purpose - extract its embedded slicer-preview
+PNG instead, which is cheaper and more accurate than a fresh render of a
+re-triangulated mesh; `.amf` has no importer anywhere in this pipeline
+either. Returns the PNG directly, one round trip, the same shape as
+`POST /thicken`. Built primarily for a caller with no CAD tooling of its
+own - see the farm-manager sibling repo's Library feature.
+
+## AI tag suggestions
+
+`POST /tags/suggest` suggests short descriptive tags for a library file
+from its filename, designer name, and any known slicer metadata (filament
+colors), via the configured LLM backend (Ollama-first, see "AI/LLM
+backend" below) - text-only reasoning, not a vision model inspecting the
+actual geometry, so treat suggestions as a rough starting point for human
+review rather than authoritative. Never fails outright: if the LLM is
+unreachable or returns something unparseable, it falls back to
+filename-derived heuristic tags and reports `"method": "heuristic_fallback"`
+in the response so a caller can tell the two apart. Built for the same
+farm-manager sibling repo's Library feature as `/thumbnail` above.
+
 ## API
 
 | Method | Path                          | Description                                                          |
 |--------|-------------------------------|------------------------------------------------------------------------|
-| GET    | `/health`                     | Reports OpenSCAD/Blender/LLM availability                              |
+| GET    | `/health`                     | Reports OpenSCAD/Blender/FreeCAD/LLM availability                       |
 | POST   | `/generate`                   | `{"prompt": "...", "wall_thickness_mm": 3.0}` -> JSON w/ model_id       |
 | GET    | `/models/{model_id}/download` | Download the STL                                                        |
 | POST   | `/models/{model_id}/thicken`  | `{"amount_mm": 1.5}` -> JSON w/ new model_id (see above)                 |
-| POST   | `/thicken`                    | multipart upload (`file`, `amount_mm`) -> **the thickened STL file**     |
+| POST   | `/thicken`                    | multipart upload (`file` .stl/.obj/.3dm, `amount_mm`, optional `quad_target_faces`) -> **the thickened STL file** |
 | POST   | `/models/{model_id}/mold`     | Mold params incl. `mode` (all optional) -> JSON w/ new model_id, `download_url` for the zip |
 | GET    | `/models/{model_id}/mold.zip` | Download the generated mold STL parts as one zip                        |
-| POST   | `/mold`                       | multipart upload (`file`, mold params incl. `mode`) -> **the STL parts as one zip** |
+| POST   | `/mold`                       | multipart upload (`file` .stl/.obj/.3dm, mold params incl. `mode`) -> **the STL parts as one zip** |
 | POST   | `/models/{model_id}/mold/draft-check` | `{"pull_axis": "z", "min_draft_angle_deg": 2.0}` -> JSON draft/undercut report, no files |
 | POST   | `/watertight/upload`          | multipart upload (`file`) -> JSON w/ model_id                           |
 | POST   | `/models/{model_id}/analyze`  | Watertight check -> JSON report (holes, classifications, viewer URL)    |
-| POST   | `/models/{model_id}/repair`   | `{"hole_ids": [0, 2]}` -> closes those holes, re-checks, new download   |
+| POST   | `/models/{model_id}/repair`   | `{"hole_ids": [0, 2]}` or `{"auto_repair": true}` -> closes holes, re-checks, new download |
 | GET    | `/models/{model_id}/viewer.glb` | Web-viewable GLB preview (produced by a prior analyze/repair call)   |
+| POST   | `/step/upload`                | multipart upload (`file`, `.step`/`.stp`) -> JSON w/ model_id (mesh)    |
+| POST   | `/models/{model_id}/export-step` | Converts the model's mesh to STEP -> **the STEP file**               |
+| POST   | `/models/{model_id}/repair-solid` | Heals B-rep topology via FreeCAD ShapeFix -> JSON, overwrites in place |
+| POST   | `/thumbnail`                  | multipart upload (`file`, `size`) -> **a PNG thumbnail**                |
+| POST   | `/tags/suggest`               | `{"file_name": "...", ...}` -> JSON w/ suggested tags + method          |
 
 Interactive docs are auto-generated by FastAPI at `/docs` once the service
 is running - `/thicken` shows up there with a file-picker and an
@@ -380,9 +477,9 @@ curl -X POST http://localhost:8000/mold \
 
 ## Running with Docker (recommended)
 
-The project is Docker-first (CLAUDE.md rule 4) - OpenSCAD and Blender are
-installed inside the image, so there's nothing to set up on the host besides
-Docker itself.
+The project is Docker-first (CLAUDE.md rule 4) - OpenSCAD, Blender, and
+FreeCAD are installed inside the image, so there's nothing to set up on
+the host besides Docker itself.
 
 ```bash
 cd /home/user/3d-printing-model-prompt
@@ -423,7 +520,14 @@ docker run --rm -p 8000:8000 --env-file .env -v threedprompt_output:/app/output 
 ## Running locally without Docker
 
 Requires OpenSCAD and Blender installed and on `PATH` (or point
-`OPENSCAD_BINARY` / `BLENDER_BINARY` at their full paths).
+`OPENSCAD_BINARY` / `BLENDER_BINARY` at their full paths). Watertight and
+mold features also need `numpy` available to Blender's Python, and `.3dm`
+input needs `rhino3dm` there too (e.g. `python3 -m pip install rhino3dm`
+for the system Python a distro-packaged Blender uses). FreeCAD
+(`freecadcmd`) is optional - without it, `.stl` thickening falls back to
+Blender automatically and `/step/upload`, `/models/{id}/export-step`,
+`/models/{id}/repair-solid` return 503; point `FREECAD_BINARY` at its
+full path if it isn't on `PATH`.
 
 ```bash
 cd /home/user/3d-printing-model-prompt
@@ -435,8 +539,13 @@ uvicorn threedprompt.main:app --reload
 ```
 
 Run the tests: `pytest` (all CAD/LLM calls are mocked, so this needs neither
-OpenSCAD/Blender nor a running LLM). Lint/format: `ruff check src tests` and
+OpenSCAD/Blender nor a running LLM; the `*_integration` tests are skipped
+unless a real Blender is on `PATH`). Lint/format: `ruff check src tests` and
 `black src tests`.
+
+CI (`.github/workflows/ci.yml`) runs ruff, black, pytest and a Docker build
+on every push/PR. The vendored `rhino3dm_reader` is excluded from ruff and
+black in `pyproject.toml` (third-party code, not held to this repo's style).
 
 ## AI/LLM backend
 
@@ -461,16 +570,20 @@ This project is intended to be open source (CLAUDE.md rule 7), MIT licensed
 | FastAPI, Uvicorn, Pydantic, Requests | MIT/BSD | permissive |
 | `anthropic` (Python SDK) | MIT | only used if `LLM_PROVIDER=claude` |
 | three.js r0.160.0 (vendored, `src/threedprompt/static/vendor/three/`) | MIT | watertight viewer; vendored not CDN-loaded, per rule 4 |
+| import_3dm v0.0.18 reader (vendored, `src/threedprompt/blender_scripts/vendor/rhino3dm_reader/`) | MIT | `.3dm` import inside Blender; license + `NOTICE.md` kept alongside |
+| `rhino3dm` (pip, installed into the image's system Python for Blender) | MIT | only needed for `.3dm` input |
 | OpenSCAD | GPL-2.0 | invoked as an external CLI process (subprocess), not linked into this codebase - GPL applies to OpenSCAD itself, not to this project |
 | Blender | GPL-3.0 | same: invoked as an external headless process, not linked in |
+| FreeCAD | LGPL-2.1 | same: invoked as an external headless process (`freecadcmd`), not linked in - LGPL is weak copyleft and, unlike OpenSCAD/Blender's GPL, wouldn't impose source-disclosure obligations even if linked directly |
 
-**Flagging per rule 7:** OpenSCAD and Blender are themselves GPL-licensed.
-This project only *shells out* to their CLI/headless executables (no linking,
-no bundling of their source into this codebase), which does not impose GPL
-obligations on this project's own code - but if you redistribute the Docker
-image itself (which bundles the OpenSCAD and Blender binaries), you're
-redistributing GPL software and should keep their license notices intact.
-Confirm this arrangement is acceptable before distributing built images.
+**Flagging per rule 7:** OpenSCAD and Blender are themselves GPL-licensed
+(FreeCAD is LGPL-2.1, more permissive). This project only *shells out* to
+their CLI/headless executables (no linking, no bundling of their source
+into this codebase), which does not impose GPL obligations on this
+project's own code - but if you redistribute the Docker image itself
+(which bundles all three binaries), you're redistributing GPL/LGPL
+software and should keep their license notices intact. Confirm this
+arrangement is acceptable before distributing built images.
 
 ## Data privacy & backups
 
@@ -486,4 +599,5 @@ Early stage - not yet announced for outside contributions, so there's no
 `CONTRIBUTING.md` yet (rule 19). See `CHANGELOG.md` for what's shipped and
 `docs/adr/` for the reasoning behind the OpenSCAD/Blender split, the hybrid
 classifier, the wall-thickness strategy, the watertight hole-detection/
-repair feature, and the mold-generation feature.
+repair feature, and the mold-generation feature. `GettingStarted.md` is the
+short quick start; `Requirements.md` tracks what's built vs. open.
