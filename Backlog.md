@@ -18,11 +18,14 @@ VRAM and licences before integrating):
 - **TRELLIS** (Microsoft, MIT) -- image/text to 3D; best licence fit;
   large variant is tight on 16 GB. Recommended, with **FLUX.1-schnell**
   (Apache-2.0) for the text -> image step.
-- Hunyuan3D-2 / 2mini (Tencent) -- often the best shapes, but the Tencent
-  community licence isn't OSI and has region/use limits (flag, rule 7).
-- TripoSR (MIT) -- fast, rougher; Stable Fast 3D / SPAR3D -- Stability
-  community licence with a revenue cap (flag); LLaMA-Mesh (NVIDIA, Llama
-  licence) -- low-poly.
+- ~~Hunyuan3D-2 / 2mini~~ (Tencent) -- often the best shapes, but the
+  Tencent community licence isn't OSI and has region/use limits: **out**
+  under the owner's commercial-use rule (2026-09-29).
+- TripoSR (MIT) -- fast, rougher. ~~Stable Fast 3D / SPAR3D~~ (Stability
+  community licence, revenue cap) and ~~LLaMA-Mesh~~ (Llama licence,
+  low-poly) -- **out** under the commercial-use rule.
+Owner rule (2026-09-29): tools must allow commercial use without caps
+(OSI licences qualify) -- the business is BoalsMakerGroup.
 Also: `qwen2.5-coder:14b` (already on lambda02) likely writes better
 OpenSCAD than gemma3:27b; CadQuery is a candidate second CAD target.
 Output would go through the existing watertight check/repair. GPUs are
