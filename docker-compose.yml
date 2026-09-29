@@ -11,11 +11,12 @@
 #     - First run (bundled ollama service): `docker compose exec ollama
 #       ollama pull llama3.1` to download the default model before
 #       generating anything - the image does not bundle model weights.
-#     - OLLAMA_HOST is read entirely from .env (rule 22: env vars, not
-#       hardcoded branches) - this file does NOT override it, so pick one:
-#         * Using the bundled `ollama` service (default): set
-#           OLLAMA_HOST=http://ollama:11434 in .env, and run
-#           `docker compose up --build` (starts both services).
+#     - OLLAMA_HOST comes from .env (rule 22: env vars, not hardcoded
+#       branches); when .env doesn't set it, this file defaults it to the
+#       bundled service. Pick one:
+#         * Using the bundled `ollama` service (default): leave OLLAMA_HOST
+#           unset in .env, and run `docker compose up --build` (starts both
+#           services).
 #         * Using Ollama already running on your host machine: set
 #           OLLAMA_HOST=http://host.docker.internal:11434 in .env, and run
 #           `docker compose up --build --no-deps app` (skips the bundled
@@ -33,6 +34,11 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      # Default to the bundled ollama service; set OLLAMA_HOST in .env to use
+      # another Ollama (see .env.example). Overrides env_file on purpose, so a
+      # stale "localhost" copied from an old .env.example can't win silently.
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
     extra_hosts:
       - "host.docker.internal:host-gateway" # only needed on native Linux Docker; harmless elsewhere
     volumes:
