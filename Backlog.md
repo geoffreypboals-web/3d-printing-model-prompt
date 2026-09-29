@@ -8,6 +8,26 @@ had no Backlog.md yet).
 
 *(Nothing yet beyond the review findings below.)*
 
+## Needs scoping first
+
+### Organic shapes: a real 3D generation model (considered 2026-09-29)
+The LLM-writes-CAD path (OpenSCAD, Blender) suits functional parts
+(dimensionally exact). For organic shapes the options that fit one 16 GB
+RTX A4000 on lambda02 (knowledge as of mid-2026 -- re-check versions,
+VRAM and licences before integrating):
+- **TRELLIS** (Microsoft, MIT) -- image/text to 3D; best licence fit;
+  large variant is tight on 16 GB. Recommended, with **FLUX.1-schnell**
+  (Apache-2.0) for the text -> image step.
+- Hunyuan3D-2 / 2mini (Tencent) -- often the best shapes, but the Tencent
+  community licence isn't OSI and has region/use limits (flag, rule 7).
+- TripoSR (MIT) -- fast, rougher; Stable Fast 3D / SPAR3D -- Stability
+  community licence with a revenue cap (flag); LLaMA-Mesh (NVIDIA, Llama
+  licence) -- low-poly.
+Also: `qwen2.5-coder:14b` (already on lambda02) likely writes better
+OpenSCAD than gemma3:27b; CadQuery is a candidate second CAD target.
+Output would go through the existing watertight check/repair. GPUs are
+shared with AI Story Writer's books, so generation queues for a free card.
+
 ## Known issues / tech debt
 
 ### Doc review findings (2026-09-23)
