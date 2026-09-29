@@ -397,6 +397,25 @@ filename-derived heuristic tags and reports `"method": "heuristic_fallback"`
 in the response so a caller can tell the two apart. Built for the same
 farm-manager sibling repo's Library feature as `/thumbnail` above.
 
+## Voice answers (speech-to-text)
+
+`POST /transcribe` (multipart `file`: a short `.webm`/`.ogg`/`.wav`/`.mp3`/
+`.m4a` recording) returns `{"text": "..."}`. It runs **locally** with
+[faster-whisper](https://github.com/SYSTRAN/faster-whisper) on CPU - no
+cloud speech API. Built for the farm-manager sibling repo's AI Model
+Generator interview, so answers can be spoken instead of typed.
+
+- The Whisper model (`WHISPER_MODEL`, default `base.en`, ~140 MB) downloads
+  on the first request into `WHISPER_MODEL_DIR` (default
+  `<OUTPUT_DIR>/whisper-models`, i.e. inside the `threedprompt_output`
+  volume under Docker) and stays loaded. First answer: ~10 s plus the
+  download; later ones: 1-2 s.
+- `WHISPER_MODEL=small.en` is more accurate but slower (~460 MB); drop the
+  `.en` for other languages. `WHISPER_DEVICE`/`WHISPER_COMPUTE_TYPE`
+  default to `cpu`/`int8`.
+- Uploads over `MAX_AUDIO_UPLOAD_BYTES` (25 MB) get a 413; a missing
+  dependency or failed model download gets a 503 with the reason.
+
 ## API
 
 | Method | Path                          | Description                                                          |
@@ -569,6 +588,8 @@ This project is intended to be open source (CLAUDE.md rule 7), MIT licensed
 |---|---|---|
 | FastAPI, Uvicorn, Pydantic, Requests | MIT/BSD | permissive |
 | `anthropic` (Python SDK) | MIT | only used if `LLM_PROVIDER=claude` |
+| `faster-whisper`, `ctranslate2`, `onnxruntime`, `tokenizers`, `huggingface-hub` | MIT / Apache-2.0 | `/transcribe`; Whisper model weights are MIT |
+| `av` (PyAV) | BSD-3-Clause | audio decoding for `/transcribe`; its wheels bundle FFmpeg shared libraries (LGPL) - dynamically linked, keep FFmpeg's notice if redistributing the image |
 | three.js r0.160.0 (vendored, `src/threedprompt/static/vendor/three/`) | MIT | watertight viewer; vendored not CDN-loaded, per rule 4 |
 | import_3dm v0.0.18 reader (vendored, `src/threedprompt/blender_scripts/vendor/rhino3dm_reader/`) | MIT | `.3dm` import inside Blender; license + `NOTICE.md` kept alongside |
 | `rhino3dm` (pip, installed into the image's system Python for Blender) | MIT | only needed for `.3dm` input |

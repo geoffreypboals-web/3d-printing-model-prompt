@@ -36,6 +36,9 @@ Troubleshooting:
       OpenSCAD/Blender, FreeCAD isn't required for the service overall -
       thickening still works via Blender without it, only the
       FreeCAD-specific endpoints fail).
+    - 503 from /transcribe means local speech-to-text couldn't run -
+      see transcription.py's header (missing faster-whisper, or the
+      Whisper model couldn't download on first use).
     - 503 from /thumbnail on a .step/.stp upload specifically can mean
       either Blender or FreeCAD is unavailable - STEP thumbnails go
       through both (FreeCAD converts to a mesh first, Blender renders it).
@@ -56,6 +59,7 @@ import shutil
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -69,6 +73,7 @@ from threedprompt import (
     tag_suggester,
     thickness,
     thumbnail,
+    transcription,
     watertight,
 )
 from threedprompt.blender_generator import BlenderGenerationError
@@ -100,6 +105,7 @@ from threedprompt.models import (
     TagSuggestResponse,
     ThickenRequest,
     ThickenResponse,
+    TranscribeResponse,
     UploadResponse,
 )
 from threedprompt.mold import MoldError
@@ -863,6 +869,32 @@ def suggest_tags(request: TagSuggestRequest) -> TagSuggestResponse:
     """
     tags, method = tag_suggester.suggest_tags(request)
     return TagSuggestResponse(tags=tags, method=method)
+
+
+@app.post("/transcribe", response_model=TranscribeResponse)
+async def transcribe_audio(file: UploadFile = _UPLOAD_FILE) -> TranscribeResponse:
+    """
+    Transcribe a short voice recording to text with local faster-whisper
+    (transcription.py). Used by the farm-manager sibling repo's AI Model
+    Generator interview so answers can be spoken. 422 for a non-audio file
+    type, 413 over MAX_AUDIO_UPLOAD_BYTES, 503 if the model can't run.
+    """
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in transcription.SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unsupported audio type {suffix!r}; expected one of {sorted(transcription.SUPPORTED_EXTENSIONS)}",
+        )
+    content = await file.read()
+    if len(content) > settings.max_audio_upload_bytes:
+        raise HTTPException(
+            status_code=413, detail=f"recording exceeds MAX_AUDIO_UPLOAD_BYTES ({settings.max_audio_upload_bytes})"
+        )
+    try:
+        text = await run_in_threadpool(transcription.transcribe, content)
+    except transcription.TranscriptionError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return TranscribeResponse(text=text)
 
 
 def _has_stl(model_id: str) -> bool:

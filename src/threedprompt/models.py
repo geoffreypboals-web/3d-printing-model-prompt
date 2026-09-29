@@ -287,6 +287,12 @@ class TagSuggestResponse(BaseModel):
     method: Literal["llm", "heuristic_fallback"]
 
 
+class TranscribeResponse(BaseModel):
+    """POST /transcribe response body."""
+
+    text: str
+
+
 class HealthResponse(BaseModel):
     """GET /health response body."""
 
