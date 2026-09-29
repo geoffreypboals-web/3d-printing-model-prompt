@@ -96,6 +96,13 @@ class Settings:
     max_wall_thickness_mm: float = field(default_factory=lambda: _env_float("MAX_WALL_THICKNESS_MM", 20.0))
     max_mold_dimension_mm: float = field(default_factory=lambda: _env_float("MAX_MOLD_DIMENSION_MM", 300.0))
     thumbnail_max_size_px: int = field(default_factory=lambda: _env_int("THUMBNAIL_MAX_SIZE_PX", 2048))
+    max_audio_upload_bytes: int = field(default_factory=lambda: _env_int("MAX_AUDIO_UPLOAD_BYTES", 25 * 1024 * 1024))
+
+    # --- Speech-to-text (transcription.py; local faster-whisper, no cloud) ---
+    whisper_model: str = field(default_factory=lambda: os.environ.get("WHISPER_MODEL", "base.en"))
+    whisper_device: str = field(default_factory=lambda: os.environ.get("WHISPER_DEVICE", "cpu"))
+    whisper_compute_type: str = field(default_factory=lambda: os.environ.get("WHISPER_COMPUTE_TYPE", "int8"))
+    whisper_model_dir: str = field(default_factory=lambda: os.environ.get("WHISPER_MODEL_DIR", ""))
 
     # --- Server ---
     host: str = field(default_factory=lambda: os.environ.get("HOST", "0.0.0.0"))
