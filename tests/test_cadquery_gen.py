@@ -64,7 +64,7 @@ class FakeLLM:
 def _run(tmp_path: Path, code: str) -> tuple[Path, str | None]:
     """Run code in the sandbox; return (output_dir, error message or None)."""
     out = tmp_path / "out"
-    out.mkdir()
+    out.mkdir(parents=True)
     (out / "part.py").write_text(code)
     try:
         run_sandboxed(out / "part.py", out)
@@ -225,3 +225,41 @@ def test_landlock_denies_tcp_connect_on_abi4(tmp_path):
 def test_without_seccomp_tcp_is_open_below_abi4(tmp_path):
     # The control for the seccomp test: proves the listener is reachable, so DENIED above is the filter's doing.
     assert _layer(tmp_path, "") == "OPEN"
+
+
+# --- reads (PR #11 review): part code must not read the server's environment or files ---
+
+
+def test_redact_strips_secret_env_values_and_assignments(monkeypatch):
+    monkeypatch.setenv("SHOPIFY_ADMIN_TOKEN", "shpat-very-secret-1")
+    text = "boom: shpat-very-secret-1 and OTHER_API_KEY=abc123 and plain=ok"
+    out = cadquery_gen.redact(text)
+    assert "shpat-very-secret-1" not in out and "abc123" not in out
+    assert "OTHER_API_KEY=[redacted]" in out and "plain=ok" in out
+
+
+@needs_sandbox
+def test_sandbox_cannot_read_parent_environ(tmp_path, monkeypatch):
+    # The reviewer's exploit, verbatim: raise the parent's environ so it lands in the error text.
+    monkeypatch.setenv("SECRET_PARENT_TOKEN", "sk-parent-only-456")
+    _, err = _run(tmp_path, "import os\nraise RuntimeError(open(f'/proc/{os.getppid()}/environ','rb').read())\n")
+    assert err and "Permission denied" in err
+    assert "sk-parent-only-456" not in err
+
+
+@needs_sandbox
+def test_sandbox_cannot_read_files_outside_the_allow_list(tmp_path):
+    planted = tmp_path / ".env"  # next to the output dir, like the app's own .env
+    planted.write_text("ANTHROPIC_API_KEY=planted-value-789\n")
+    for path in (planted, "/etc/passwd"):
+        _, err = _run(tmp_path / str(abs(hash(str(path)))), f"raise RuntimeError(open({str(path)!r}).read())\n")
+        assert err and "Permission denied" in err, (path, err)
+        assert "planted-value-789" not in err
+
+
+@needs_sandbox
+def test_sandbox_can_still_read_its_own_proc_and_output(tmp_path):
+    code = "open('note.txt', 'w').write('x')\nassert open('note.txt').read() == 'x'\n"
+    code += "open('/proc/self/status').read()\nresult = cq.Workplane().box(5, 5, 5)\n"
+    _, err = _run(tmp_path, code)
+    assert err is None

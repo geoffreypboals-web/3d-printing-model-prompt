@@ -6,9 +6,12 @@ Description: The sandboxed child process for the CadQuery backend. Run
     by cadquery_gen/__init__.py (tests import its lockdown functions). It imports CadQuery,
     then locks itself down before running the LLM-written code:
       1. rlimits: CPU seconds, address space, 100 MB max file, no core dumps
-      2. Landlock (kernel): no file writes, deletes or creates anywhere
-         except <output_dir>, and no execve at all; on Landlock ABI >= 4
-         also no TCP connect/bind. Covers OCCT's native exporters too.
+      2. Landlock (kernel): reads only from an allow-list (Python's own
+         prefix and site-packages, /usr, /lib*, a few /etc and /dev files,
+         its own /proc/self, <output_dir>) -- so no /proc/<parent>/environ,
+         no .env, no ~/.ssh; writes, deletes and creates only in
+         <output_dir>; no execve at all; on Landlock ABI >= 4 also no TCP
+         connect/bind. Covers OCCT's native code too.
       3. seccomp (kernel): socket() and io_uring_setup() fail with EACCES,
          so no network from Python or native code, on any kernel
       4. a Python audit hook: no sockets, subprocesses, fork, ctypes, or
@@ -35,13 +38,14 @@ import ctypes
 import os
 import resource
 import runpy
+import site
 import sys
 
 # Landlock uapi (linux/landlock.h); syscall numbers are the same on x86_64 and arm64.
 _SYS_CREATE_RULESET, _SYS_ADD_RULE, _SYS_RESTRICT_SELF = 444, 445, 446
 _PR_SET_NO_NEW_PRIVS = 38
 _SECCOMP_SET_MODE_FILTER, _SECCOMP_FILTER_FLAG_TSYNC = 1, 1
-_FS_EXECUTE, _FS_WRITE_FILE = 1 << 0, 1 << 1
+_FS_EXECUTE, _FS_WRITE_FILE, _FS_READ_FILE, _FS_READ_DIR = 1 << 0, 1 << 1, 1 << 2, 1 << 3
 _FS_REMOVE_DIR, _FS_REMOVE_FILE = 1 << 4, 1 << 5
 _FS_MAKE_DIR, _FS_MAKE_REG = 1 << 7, 1 << 8
 _FS_MAKE_ALL = sum(1 << b for b in range(6, 13))  # char, dir, reg, sock, fifo, block, sym
@@ -66,15 +70,29 @@ def _deny(event, args):
         raise PermissionError("sandbox: code-object swap blocked")
 
 
+# Readable after the lockdown. No EXECUTE anywhere: Landlock's execute right governs execve only, and
+# shared libraries still map without it, so granting it would just re-open running /usr/bin/*.
+_READ_DIRS = ("/usr", "/lib", "/lib64")
+_READ_FILES = ("/etc/ld.so.cache", "/etc/localtime", "/dev/urandom")
+
+
+def _read_dirs():
+    """Directories part code may read: the system library dirs plus this interpreter's prefix and site-packages."""
+    dirs = {*_READ_DIRS, sys.prefix, sys.base_prefix, sys.exec_prefix, *site.getsitepackages()}
+    return sorted(d for d in dirs if os.path.isdir(d))
+
+
 def _landlock(output_dir):
-    """Restrict this process (and anything it could start) to writing only inside output_dir; return the ABI."""
+    """Restrict this process (and anything it could start): reads from the allow-list only, writes only inside
+    output_dir, no execve; return the ABI."""
     libc = ctypes.CDLL(None, use_errno=True)
     libc.syscall.restype = ctypes.c_long
     abi = libc.syscall(_SYS_CREATE_RULESET, None, ctypes.c_size_t(0), ctypes.c_uint32(1))
     if abi < 1:
         raise SystemExit(f"sandbox: Landlock unavailable (errno {ctypes.get_errno()}); refusing to run")
-    handled = _FS_EXECUTE | _FS_WRITE_FILE | _FS_REMOVE_DIR | _FS_REMOVE_FILE | _FS_MAKE_ALL
-    allowed = _FS_WRITE_FILE | _FS_REMOVE_FILE | _FS_MAKE_REG | _FS_MAKE_DIR
+    read = _FS_READ_FILE | _FS_READ_DIR
+    handled = _FS_EXECUTE | _FS_WRITE_FILE | read | _FS_REMOVE_DIR | _FS_REMOVE_FILE | _FS_MAKE_ALL
+    allowed = read | _FS_WRITE_FILE | _FS_REMOVE_FILE | _FS_MAKE_REG | _FS_MAKE_DIR
     if abi >= 2:
         handled |= _FS_REFER
     if abi >= 3:
@@ -92,11 +110,24 @@ def _landlock(output_dir):
         _pack_ = 1
         _fields_ = [("allowed_access", ctypes.c_uint64), ("parent_fd", ctypes.c_int32)]
 
-    dir_fd = os.open(output_dir, os.O_PATH | os.O_CLOEXEC)
-    rule = _PathBeneath(allowed, dir_fd)
-    if libc.syscall(_SYS_ADD_RULE, ruleset, ctypes.c_uint32(1), ctypes.byref(rule), ctypes.c_uint32(0)) < 0:
-        raise SystemExit(f"sandbox: landlock_add_rule failed (errno {ctypes.get_errno()})")
-    os.close(dir_fd)
+    def add_rule(path, access):
+        fd = os.open(path, os.O_PATH | os.O_CLOEXEC)  # /proc/self resolves here, to this pid only
+        try:
+            rule = _PathBeneath(access, fd)
+            if libc.syscall(_SYS_ADD_RULE, ruleset, ctypes.c_uint32(1), ctypes.byref(rule), ctypes.c_uint32(0)) < 0:
+                raise SystemExit(f"sandbox: landlock_add_rule {path} failed (errno {ctypes.get_errno()})")
+        finally:
+            os.close(fd)
+
+    add_rule(output_dir, allowed)
+    for d in _read_dirs():
+        add_rule(d, read)
+    add_rule("/proc/self", read)
+    for f in _READ_FILES:
+        if os.path.exists(f):
+            add_rule(f, _FS_READ_FILE)
+    if os.path.exists("/dev/null"):
+        add_rule("/dev/null", _FS_READ_FILE | _FS_WRITE_FILE)
     if libc.prctl(_PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
         raise SystemExit("sandbox: prctl(NO_NEW_PRIVS) failed")
     if libc.syscall(_SYS_RESTRICT_SELF, ruleset, ctypes.c_uint32(0)) < 0:

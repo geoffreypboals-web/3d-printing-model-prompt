@@ -3,8 +3,9 @@ Project: 3D Printing Model Prompt
 File: /home/user/3d-printing-model-prompt/src/threedprompt/cadquery_gen/__init__.py
 Description: Parametric-part backend using CadQuery (Python CAD on the
     OpenCASCADE kernel). Asks the configured LLM to write CadQuery code,
-    runs it in a sandboxed subprocess (runner.py: Landlock + seccomp +
-    rlimits + audit hook, stripped environment), exports STL, then runs the
+    runs it in a sandboxed subprocess (runner.py: Landlock read/write
+    allow-lists + seccomp + rlimits + audit hook, stripped environment;
+    secrets are also redacted from its error text), exports STL, then runs the
     existing watertight check (watertight.py). One retry with the error
     fed back to the LLM, like the OpenSCAD and Blender backends.
 Inputs: A prompt string, an output directory, an optional LLMClient;
@@ -31,6 +32,7 @@ from __future__ import annotations
 import ctypes
 import importlib.util
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -72,6 +74,20 @@ def landlock_abi() -> int:
     return max(0, libc.syscall(444, None, ctypes.c_size_t(0), ctypes.c_uint32(1)))
 
 
+_SECRET_NAME = re.compile(r"KEY|TOKEN|SECRET|PASSW|CREDENTIAL|AUTH", re.IGNORECASE)
+_SECRET_ASSIGNMENT = re.compile(r"\b(\w*(?:KEY|TOKEN|SECRET|PASSW|CREDENTIAL|AUTH)\w*)\s*[=:]\s*\S+", re.IGNORECASE)
+
+
+def redact(text: str) -> str:
+    """Strip secrets from child error text before it reaches the HTTP detail, the logs or the LLM retry prompt:
+    the value of every secret-named environment variable (and ANTHROPIC_API_KEY), then any NAME=value whose name
+    looks secret. Defence in depth: Landlock already stops the child reading the parent's environ or files."""
+    values = {settings.anthropic_api_key, *(v for k, v in os.environ.items() if _SECRET_NAME.search(k))}
+    for value in sorted((v for v in values if v and len(v) >= 6), key=len, reverse=True):
+        text = text.replace(value, "[redacted]")
+    return _SECRET_ASSIGNMENT.sub(r"\1=[redacted]", text)
+
+
 def available() -> bool:
     """True when this host can run the backend: Landlock in the kernel and cadquery installed."""
     return landlock_abi() >= 1 and importlib.util.find_spec("cadquery") is not None
@@ -90,7 +106,7 @@ def run_sandboxed(code_path: Path, output_dir: Path) -> Path:
     except subprocess.TimeoutExpired as exc:
         raise CadQueryGenerationError(f"part code ran longer than {timeout}s") from exc
     if proc.returncode != 0 or not stl_path.exists():
-        tail = "\n".join(proc.stderr.splitlines()[-30:])
+        tail = redact("\n".join(proc.stderr.splitlines()[-30:]))
         raise CadQueryGenerationError(f"part code failed (exit {proc.returncode}): {tail}")
     return stl_path
 
