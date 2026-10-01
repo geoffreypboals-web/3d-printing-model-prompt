@@ -129,6 +129,33 @@ def test_generate_golden_path_simple_routes_to_openscad(monkeypatch, client):
     assert body["download_url"] == f"/models/{body['model_id']}/download"
 
 
+@pytest.mark.parametrize(
+    "prompt,setting,sandbox,expected",
+    [
+        ("a cable clip for 6mm cable", "cadquery", True, "cadquery"),  # no template: CadQuery writes it
+        ("a cable clip for 6mm cable", "cadquery", False, "openscad"),  # sandbox can't run: OpenSCAD
+        ("a cable clip for 6mm cable", "openscad", True, "openscad"),  # owner chose OpenSCAD
+        ("a mounting bracket", "cadquery", True, "openscad"),  # template wins, no LLM call
+    ],
+)
+def test_generate_simple_routes_cadquery_or_openscad(monkeypatch, client, prompt, setting, sandbox, expected):
+    monkeypatch.setattr(
+        main, "classify_prompt", lambda p: ClassificationResult(Complexity.SIMPLE, 0.9, ClassificationMethod.LLM, "")
+    )
+    monkeypatch.setattr(main.settings, "simple_llm_backend", setting)
+    monkeypatch.setattr(main.cadquery_gen, "available", lambda: sandbox)
+    monkeypatch.setattr(openscad_generator, "generate", _fake_openscad_generate)
+
+    def fake_cadquery(prompt, output_dir, wall_thickness_mm=None, llm_client=None):
+        result = _fake_openscad_generate(prompt, output_dir, wall_thickness_mm)
+        return GenerationResult(Backend.CADQUERY, result.stl_path, result.source_path, "cadquery_py", None)
+
+    monkeypatch.setattr(main.cadquery_gen, "generate", fake_cadquery)
+    resp = client.post("/generate", json={"prompt": prompt})
+    assert resp.status_code == 200
+    assert resp.json()["backend"] == expected
+
+
 def test_generate_golden_path_complex_routes_to_blender(monkeypatch, client):
     monkeypatch.setattr(
         main,

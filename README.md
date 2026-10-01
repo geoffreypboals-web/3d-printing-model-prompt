@@ -45,6 +45,26 @@ is also available for scripting/automation, with interactive docs at
 4. **Blender path**: always LLM-authored - the LLM writes a small `bpy`
    Python script that builds the shape from primitives and modifiers, which
    headless Blender then runs and exports to STL.
+5. **CadQuery path** (`src/threedprompt/cadquery_gen/`): a simple prompt
+   that no OpenSCAD template covers goes to CadQuery when
+   `SIMPLE_LLM_BACKEND=cadquery` (the default) and the sandbox can run on
+   this host; otherwise it falls back to LLM-authored OpenSCAD (logged).
+   The LLM writes CadQuery Python, which runs in a sandboxed subprocess,
+   then the STL must pass the watertight check. The sandbox is
+   `cadquery_gen/runner.py`: Linux Landlock allows file writes only in the
+   model's output folder and no `exec`; a seccomp filter makes `socket()`
+   fail at the kernel (on every kernel, for Python and native code alike);
+   a Python audit hook also blocks sockets,
+   subprocesses and ctypes; rlimits cap CPU (`CAD_SUBPROCESS_TIMEOUT_SECONDS`),
+   memory (`CADQUERY_MEMORY_LIMIT_MB`, default 4096) and file size; and the
+   child gets no environment variables (no API keys). On kernels 6.7+
+   Landlock also denies TCP connect/bind. It **refuses to run without
+   Landlock** (Linux 5.13+), so on Windows/macOS use Docker. Its tests run
+   in the image:
+
+   ```bash
+   cd /home/user/3d-printing-model-prompt && docker build -t threedprompt . && docker run --rm -v "$PWD/tests:/app/tests:ro" -v "$PWD/requirements-dev.txt:/app/requirements-dev.txt:ro" threedprompt sh -c "pip install -q --user -r requirements-dev.txt && python -m pytest -q -rs tests/test_cadquery_gen.py"
+   ```
 
 **Known limitation:** there's no deterministic fallback for organic shapes -
 "a dwarf sitting under a mushroom" is genuinely hard to model well from a
