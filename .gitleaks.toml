@@ -1,0 +1,23 @@
+# Fleet gitleaks config (SuiteControl/templates/ci). Copy to the repo root
+# as .gitleaks.toml -- see templates/ci/README.md.
+#
+# Uses gitleaks' built-in rules (about 150 curated secret patterns) and adds
+# allowlist entries only. Every allowlist entry MUST say why it's safe in
+# its `description`; an entry without a reason is a review failure.
+# Never allowlist a real secret to make CI pass -- rotate it instead.
+
+[extend]
+useDefault = true
+
+# Template entry -- keep it: lets this config file itself, and docs that show
+# placeholder formats, pass without hiding anything in real code.
+[[allowlists]]
+description = "Placeholders in docs and examples: the literal markers below are never real credentials."
+regexes = [
+  '''(?i)(changeme|placeholder|your[-_]?(api[-_]?)?(key|token|secret)|<[a-z_-]*(token|key|secret)[a-z_-]*>|x{8,})''',
+]
+
+# Per-repo entries go below, one block each, with a reason. Example:
+# [[allowlists]]
+# description = "tests/fixtures/fake_tokens.py: deliberately fake tokens used to test the secret-redaction code."
+# paths = ['''^tests/fixtures/fake_tokens\.py$''']

@@ -1,0 +1,15 @@
+# Fleet pre-commit hooks (SuiteControl/templates/ci). Copy to the repo root
+# as .pre-commit-config.yaml -- see templates/ci/README.md.
+#
+# gitleaks blocks a commit that adds a secret. `language: golang` means
+# pre-commit compiles gitleaks from this exact source commit (Go's checksum
+# database makes the module source tamper-evident); no prebuilt binary or
+# Docker image is downloaded.
+#
+# Pinned by full commit SHA, never by tag: tags can be re-pointed
+# (CVE-2026-33634, the trivy-action tag hijack, March 2026).
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e # v8.30.1
+    hooks:
+      - id: gitleaks
