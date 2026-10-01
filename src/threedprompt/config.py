@@ -86,6 +86,8 @@ class Settings:
     blender_binary: str = field(default_factory=lambda: os.environ.get("BLENDER_BINARY", "blender"))
     freecad_binary: str = field(default_factory=lambda: os.environ.get("FREECAD_BINARY", "freecadcmd"))
     cad_subprocess_timeout_seconds: int = field(default_factory=lambda: _env_int("CAD_SUBPROCESS_TIMEOUT_SECONDS", 180))
+    # Address-space cap for the sandboxed CadQuery child (cadquery_gen/runner.py).
+    cadquery_memory_limit_mb: int = field(default_factory=lambda: _env_int("CADQUERY_MEMORY_LIMIT_MB", 4096))
 
     # --- Storage ---
     output_dir: str = field(default_factory=lambda: os.environ.get("OUTPUT_DIR", "./output"))

@@ -1,0 +1,127 @@
+"""
+Project: 3D Printing Model Prompt
+File: /home/user/3d-printing-model-prompt/src/threedprompt/cadquery_gen/runner.py
+Description: The sandboxed child process for the CadQuery backend. Run
+    only as `python -I runner.py <part.py> <output_dir> <cpu_s> <mem_mb>`
+    by cadquery_gen/__init__.py, never imported. It imports CadQuery,
+    then locks itself down before running the LLM-written code:
+      1. rlimits: CPU seconds, address space, 100 MB max file, no core dumps
+      2. Landlock (kernel): no file writes, deletes or creates anywhere
+         except <output_dir>, and no execve at all; on Landlock ABI >= 4
+         also no TCP connect/bind. Covers OCCT's native exporters too.
+      3. a Python audit hook: no sockets, subprocesses, fork, ctypes, or
+         gc/code-object tricks aimed at the hook itself
+    Then it runs part.py, which must assign `result` (a cq.Workplane or
+    Shape), and exports it to <output_dir>/model.stl.
+Inputs: argv as above. Deliberately imports nothing from threedprompt so
+    the child never loads the app's config (or sees its secrets; the
+    parent also passes a stripped environment).
+Outputs: <output_dir>/model.stl; exit 0 on success. Any failure exits
+    non-zero with the reason on stderr (the parent feeds it to the LLM).
+Troubleshooting:
+    - "sandbox: Landlock unavailable": the kernel lacks Landlock (Linux
+      5.13+, enabled in the LSM list) or a seccomp profile blocks its
+      syscalls. The runner refuses to run unsandboxed - fix the host,
+      don't bypass it. Windows/macOS hosts: run the Docker image.
+    - "sandbox: <event> blocked": the part code tried something outside
+      geometry (network, processes, ctypes). Expected; the LLM retries.
+    - MemoryError / "std::bad_alloc": the part exceeded
+      CADQUERY_MEMORY_LIMIT_MB; raise it if real parts need more.
+"""
+
+import ctypes
+import os
+import resource
+import runpy
+import sys
+
+# Landlock uapi (linux/landlock.h); syscall numbers are the same on x86_64 and arm64.
+_SYS_CREATE_RULESET, _SYS_ADD_RULE, _SYS_RESTRICT_SELF = 444, 445, 446
+_PR_SET_NO_NEW_PRIVS = 38
+_FS_EXECUTE, _FS_WRITE_FILE = 1 << 0, 1 << 1
+_FS_REMOVE_DIR, _FS_REMOVE_FILE = 1 << 4, 1 << 5
+_FS_MAKE_DIR, _FS_MAKE_REG = 1 << 7, 1 << 8
+_FS_MAKE_ALL = sum(1 << b for b in range(6, 13))  # char, dir, reg, sock, fifo, block, sym
+_FS_REFER, _FS_TRUNCATE = 1 << 13, 1 << 14  # ABI 2, ABI 3
+_NET_BIND_TCP, _NET_CONNECT_TCP = 1 << 0, 1 << 1  # ABI 4
+
+_BLOCKED_EVENTS = frozenset(
+    {
+        "socket.__new__", "socket.bind", "socket.connect", "socket.getaddrinfo", "socket.gethostbyname",
+        "socket.gethostbyaddr", "socket.sendto", "subprocess.Popen", "os.system", "os.exec", "os.posix_spawn",
+        "os.spawn", "os.fork", "os.forkpty", "os.kill", "os.killpg", "pty.spawn", "gc.get_objects",
+        "gc.get_referrers", "gc.get_referents", "sys.setprofile", "sys.settrace", "webbrowser.open",
+    }
+)  # fmt: skip
+
+
+def _deny(event, args):
+    """Audit hook: refuse the events above, all of ctypes, and swapping a function's code object."""
+    if event in _BLOCKED_EVENTS or event.startswith("ctypes."):
+        raise PermissionError(f"sandbox: {event} blocked")
+    if event == "object.__setattr__" and len(args) > 1 and args[1] in ("__code__", "__closure__"):
+        raise PermissionError("sandbox: code-object swap blocked")
+
+
+def _landlock(output_dir):
+    """Restrict this process (and anything it could start) to writing only inside output_dir; return the ABI."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.syscall.restype = ctypes.c_long
+    abi = libc.syscall(_SYS_CREATE_RULESET, None, ctypes.c_size_t(0), ctypes.c_uint32(1))
+    if abi < 1:
+        raise SystemExit(f"sandbox: Landlock unavailable (errno {ctypes.get_errno()}); refusing to run")
+    handled = _FS_EXECUTE | _FS_WRITE_FILE | _FS_REMOVE_DIR | _FS_REMOVE_FILE | _FS_MAKE_ALL
+    allowed = _FS_WRITE_FILE | _FS_REMOVE_FILE | _FS_MAKE_REG | _FS_MAKE_DIR
+    if abi >= 2:
+        handled |= _FS_REFER
+    if abi >= 3:
+        handled |= _FS_TRUNCATE
+        allowed |= _FS_TRUNCATE
+    net = _NET_BIND_TCP | _NET_CONNECT_TCP if abi >= 4 else 0  # handled with no rules = all TCP denied
+
+    attr = (ctypes.c_uint64 * 2)(handled, net)
+    size = 16 if abi >= 4 else 8
+    ruleset = libc.syscall(_SYS_CREATE_RULESET, ctypes.byref(attr), ctypes.c_size_t(size), ctypes.c_uint32(0))
+    if ruleset < 0:
+        raise SystemExit(f"sandbox: landlock_create_ruleset failed (errno {ctypes.get_errno()})")
+
+    class _PathBeneath(ctypes.Structure):
+        _pack_ = 1
+        _fields_ = [("allowed_access", ctypes.c_uint64), ("parent_fd", ctypes.c_int32)]
+
+    dir_fd = os.open(output_dir, os.O_PATH | os.O_CLOEXEC)
+    rule = _PathBeneath(allowed, dir_fd)
+    if libc.syscall(_SYS_ADD_RULE, ruleset, ctypes.c_uint32(1), ctypes.byref(rule), ctypes.c_uint32(0)) < 0:
+        raise SystemExit(f"sandbox: landlock_add_rule failed (errno {ctypes.get_errno()})")
+    os.close(dir_fd)
+    if libc.prctl(_PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
+        raise SystemExit("sandbox: prctl(NO_NEW_PRIVS) failed")
+    if libc.syscall(_SYS_RESTRICT_SELF, ruleset, ctypes.c_uint32(0)) < 0:
+        raise SystemExit(f"sandbox: landlock_restrict_self failed (errno {ctypes.get_errno()})")
+    os.close(ruleset)
+    return abi
+
+
+def main():
+    """Lock down, run the part code, export model.stl."""
+    code_path, output_dir = sys.argv[1], os.path.realpath(sys.argv[2])
+    cpu_s, mem_mb = int(sys.argv[3]), int(sys.argv[4])
+    import cadquery as cq  # before the lockdown: imports read and map native libraries
+
+    resource.setrlimit(resource.RLIMIT_CPU, (cpu_s, cpu_s))
+    resource.setrlimit(resource.RLIMIT_AS, (mem_mb << 20, mem_mb << 20))
+    resource.setrlimit(resource.RLIMIT_FSIZE, (100 << 20, 100 << 20))
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    abi = _landlock(output_dir)
+    sys.addaudithook(_deny)
+    print(f"sandbox: landlock ABI {abi}, tcp {'kernel-denied' if abi >= 4 else 'hook-denied'}", file=sys.stderr)
+
+    part = runpy.run_path(code_path, init_globals={"cq": cq}, run_name="__cadquery_part__")
+    result = part.get("result")
+    if result is None:
+        raise SystemExit("part.py must assign the finished part to a variable named `result`")
+    cq.exporters.export(result, os.path.join(output_dir, "model.stl"))
+
+
+if __name__ == "__main__":
+    main()

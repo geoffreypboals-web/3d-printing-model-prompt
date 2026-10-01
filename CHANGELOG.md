@@ -6,6 +6,17 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ## [Unreleased]
 
+### Added (sandboxed CadQuery backend, 2026-10-01, board WP-18)
+
+- `src/threedprompt/cadquery_gen/`: LLM-written CadQuery code runs in a
+  sandboxed subprocess (Landlock: writes only in the output folder, no
+  exec; audit hook: no sockets, subprocesses or ctypes; CPU, memory and
+  file-size rlimits; empty environment). The exported STL must pass the
+  watertight check, with one LLM retry. Refuses to run without Landlock.
+  Not routed from `POST /generate` yet. New dependency `cadquery==2.8.0`
+  (Apache-2.0; OCCT kernel LGPL-2.1 with exception); new setting
+  `CADQUERY_MEMORY_LIMIT_MB`.
+
 ### Added (intake mesh check support, 2026-09-27)
 
 - `POST /models/{model_id}/analyze` now returns `self_intersection_count`
