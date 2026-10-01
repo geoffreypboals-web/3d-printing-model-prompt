@@ -65,6 +65,7 @@ from fastapi.staticfiles import StaticFiles
 
 from threedprompt import (
     blender_generator,
+    cadquery_gen,
     draft_analysis,
     freecad_cad,
     mold,
@@ -77,6 +78,7 @@ from threedprompt import (
     watertight,
 )
 from threedprompt.blender_generator import BlenderGenerationError
+from threedprompt.cadquery_gen import CadQueryGenerationError
 from threedprompt.classifier import classify_prompt
 from threedprompt.config import settings
 from threedprompt.draft_analysis import DraftAnalysisError
@@ -150,9 +152,19 @@ def health() -> HealthResponse:
     )
 
 
+def _use_cadquery(prompt: str) -> bool:
+    """CadQuery writes simple parts no OpenSCAD template covers, when configured and the sandbox can run here."""
+    if settings.simple_llm_backend != "cadquery" or openscad_generator.has_template(prompt):
+        return False
+    if not cadquery_gen.available():
+        logger.warning("SIMPLE_LLM_BACKEND=cadquery but the sandbox can't run here; using OpenSCAD.")
+        return False
+    return True
+
+
 @app.post("/generate", response_model=GenerateResponse)
 def generate(request: GenerateRequest) -> GenerateResponse:
-    """Classify a prompt and generate a model via OpenSCAD (simple) or Blender (complex)."""
+    """Classify a prompt and generate a model: OpenSCAD template or CadQuery/OpenSCAD (simple), Blender (complex)."""
     prompt = request.prompt.strip()
     if not prompt:
         raise HTTPException(status_code=422, detail="prompt must not be empty")
@@ -179,11 +191,13 @@ def generate(request: GenerateRequest) -> GenerateResponse:
 
     model_id, model_directory = storage.new_model_dir()
     try:
-        if classification.label is Complexity.SIMPLE:
+        if classification.label is Complexity.SIMPLE and _use_cadquery(prompt):
+            result = cadquery_gen.generate(prompt, model_directory, request.wall_thickness_mm)
+        elif classification.label is Complexity.SIMPLE:
             result = openscad_generator.generate(prompt, model_directory, request.wall_thickness_mm)
         else:
             result = blender_generator.generate(prompt, model_directory)
-    except (OpenScadGenerationError, BlenderGenerationError, LLMError) as exc:
+    except (OpenScadGenerationError, BlenderGenerationError, CadQueryGenerationError, LLMError) as exc:
         shutil.rmtree(model_directory, ignore_errors=True)
         logger.error("Generation failed for model_id=%s: %s", model_id, exc)
         raise HTTPException(status_code=503, detail=str(exc)) from exc

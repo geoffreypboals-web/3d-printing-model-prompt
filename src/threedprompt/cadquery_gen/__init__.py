@@ -3,8 +3,8 @@ Project: 3D Printing Model Prompt
 File: /home/user/3d-printing-model-prompt/src/threedprompt/cadquery_gen/__init__.py
 Description: Parametric-part backend using CadQuery (Python CAD on the
     OpenCASCADE kernel). Asks the configured LLM to write CadQuery code,
-    runs it in a sandboxed subprocess (runner.py: Landlock + rlimits +
-    audit hook, stripped environment), exports STL, then runs the
+    runs it in a sandboxed subprocess (runner.py: Landlock + seccomp +
+    rlimits + audit hook, stripped environment), exports STL, then runs the
     existing watertight check (watertight.py). One retry with the error
     fed back to the LLM, like the OpenSCAD and Blender backends.
 Inputs: A prompt string, an output directory, an optional LLMClient;
@@ -20,13 +20,16 @@ Troubleshooting:
       (cadquery pulls the cadquery-ocp OpenCASCADE wheel, ~100 MB).
     - "not watertight" after both attempts: the LLM's solid has open
       faces; the watertight report in the error names the holes.
-    - Known ceiling: on Landlock ABI < 4 (kernels before 6.7) network is
-      blocked only by the Python audit hook, not the kernel.
+    - Known ceiling: Landlock binds only the thread that calls it, so
+      native threads started during `import cadquery` aren't
+      write-restricted; they run library code only, never part code.
+      (The seccomp filter uses TSYNC and does cover them.)
 """
 
 from __future__ import annotations
 
 import ctypes
+import importlib.util
 import os
 import subprocess
 import sys
@@ -69,6 +72,11 @@ def landlock_abi() -> int:
     return max(0, libc.syscall(444, None, ctypes.c_size_t(0), ctypes.c_uint32(1)))
 
 
+def available() -> bool:
+    """True when this host can run the backend: Landlock in the kernel and cadquery installed."""
+    return landlock_abi() >= 1 and importlib.util.find_spec("cadquery") is not None
+
+
 def run_sandboxed(code_path: Path, output_dir: Path) -> Path:
     """Run part code in runner.py's sandbox; return model.stl or raise with the child's stderr."""
     stl_path = output_dir / "model.stl"
@@ -97,10 +105,17 @@ def _llm_generate_code(prompt: str, llm_client: LLMClient, previous_error: str |
     return _strip_markdown_fences(llm_client.generate(prompt=user_prompt, system=_LLM_SYSTEM_PROMPT))
 
 
-def generate(prompt: str, output_dir: Path, llm_client: LLMClient | None = None) -> GenerationResult:
+def generate(
+    prompt: str,
+    output_dir: Path,
+    wall_thickness_mm: float | None = None,
+    llm_client: LLMClient | None = None,
+) -> GenerationResult:
     """Generate a parametric part via LLM-written CadQuery code, sandboxed, checked watertight."""
     if landlock_abi() < 1:  # fail before spending an LLM call
         raise CadQueryGenerationError("Landlock unavailable: the CadQuery backend needs a Linux kernel with Landlock")
+    if wall_thickness_mm:
+        prompt += f" (wall_thickness = {wall_thickness_mm} mm)"
     output_dir.mkdir(parents=True, exist_ok=True)
     code_path = output_dir / "part.py"
     if llm_client is None:

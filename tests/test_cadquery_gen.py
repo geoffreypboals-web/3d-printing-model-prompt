@@ -172,3 +172,56 @@ def test_fixture_prompts_generate_watertight_parts(tmp_path, prompt):
     result = generate(prompt, tmp_path / "model", llm_client=FakeLLM(FIXTURES[prompt]))
     assert Path(result.stl_path).stat().st_size > 0
     assert result.backend is Backend.CADQUERY and result.source_kind == "cadquery_py"
+
+
+# --- each kernel layer on its own, without the audit hook (what native code would face) ---
+
+_LAYER = """\
+import socket, sys
+sys.path.insert(0, {runner_dir!r})
+import runner
+runner._landlock({out!r})
+{extra}
+try:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(3)
+    s.connect(("127.0.0.1", {port}))
+    print("OPEN")
+except PermissionError as exc:
+    print("DENIED", exc.errno)
+"""
+
+
+def _layer(tmp_path, extra: str) -> str:
+    """Apply runner.py's kernel layers (no audit hook) in a fresh process, try a TCP connect to a local listener."""
+    import socket
+    import subprocess
+    import sys
+
+    out = tmp_path / "out"
+    out.mkdir()
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        script = _LAYER.format(
+            runner_dir=str(cadquery_gen.RUNNER.parent), out=str(out), extra=extra, port=listener.getsockname()[1]
+        )
+        proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+    return proc.stdout.strip()
+
+
+@pytest.mark.skipif(landlock_abi() < 1, reason="needs Linux with Landlock")
+def test_seccomp_denies_sockets_on_any_kernel(tmp_path):
+    assert _layer(tmp_path, "runner._seccomp_no_sockets()") == "DENIED 13"
+
+
+@pytest.mark.skipif(landlock_abi() < 4, reason="needs Landlock ABI 4 (Linux 6.7+) for TCP rules")
+def test_landlock_denies_tcp_connect_on_abi4(tmp_path):
+    assert _layer(tmp_path, "") == "DENIED 13"
+
+
+@pytest.mark.skipif(landlock_abi() < 1 or landlock_abi() >= 4, reason="only meaningful below Landlock ABI 4")
+def test_without_seccomp_tcp_is_open_below_abi4(tmp_path):
+    # The control for the seccomp test: proves the listener is reachable, so DENIED above is the filter's doing.
+    assert _layer(tmp_path, "") == "OPEN"

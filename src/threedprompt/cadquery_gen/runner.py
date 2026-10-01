@@ -3,13 +3,15 @@ Project: 3D Printing Model Prompt
 File: /home/user/3d-printing-model-prompt/src/threedprompt/cadquery_gen/runner.py
 Description: The sandboxed child process for the CadQuery backend. Run
     only as `python -I runner.py <part.py> <output_dir> <cpu_s> <mem_mb>`
-    by cadquery_gen/__init__.py, never imported. It imports CadQuery,
+    by cadquery_gen/__init__.py (tests import its lockdown functions). It imports CadQuery,
     then locks itself down before running the LLM-written code:
       1. rlimits: CPU seconds, address space, 100 MB max file, no core dumps
       2. Landlock (kernel): no file writes, deletes or creates anywhere
          except <output_dir>, and no execve at all; on Landlock ABI >= 4
          also no TCP connect/bind. Covers OCCT's native exporters too.
-      3. a Python audit hook: no sockets, subprocesses, fork, ctypes, or
+      3. seccomp (kernel): socket() and io_uring_setup() fail with EACCES,
+         so no network from Python or native code, on any kernel
+      4. a Python audit hook: no sockets, subprocesses, fork, ctypes, or
          gc/code-object tricks aimed at the hook itself
     Then it runs part.py, which must assign `result` (a cq.Workplane or
     Shape), and exports it to <output_dir>/model.stl.
@@ -38,6 +40,7 @@ import sys
 # Landlock uapi (linux/landlock.h); syscall numbers are the same on x86_64 and arm64.
 _SYS_CREATE_RULESET, _SYS_ADD_RULE, _SYS_RESTRICT_SELF = 444, 445, 446
 _PR_SET_NO_NEW_PRIVS = 38
+_SECCOMP_SET_MODE_FILTER, _SECCOMP_FILTER_FLAG_TSYNC = 1, 1
 _FS_EXECUTE, _FS_WRITE_FILE = 1 << 0, 1 << 1
 _FS_REMOVE_DIR, _FS_REMOVE_FILE = 1 << 4, 1 << 5
 _FS_MAKE_DIR, _FS_MAKE_REG = 1 << 7, 1 << 8
@@ -102,6 +105,44 @@ def _landlock(output_dir):
     return abi
 
 
+def _seccomp_no_sockets():
+    """Install a seccomp filter: socket() and io_uring_setup() return EACCES, x32 syscalls too; else allowed.
+
+    Needs NO_NEW_PRIVS, which _landlock() sets first. TSYNC applies it to every thread, including native
+    ones started during `import cadquery`. Unknown architectures fail closed (SystemExit).
+    """
+    arches = {"x86_64": (0xC000003E, 41, 317), "aarch64": (0xC00000B7, 198, 277)}  # audit arch, socket, seccomp
+    arch, sys_socket, sys_seccomp = arches.get(os.uname().machine, (0, 0, 0))
+    if not arch:
+        raise SystemExit(f"sandbox: no seccomp filter for {os.uname().machine}; refusing to run")
+    ld, jeq, jge, ret = 0x20, 0x15, 0x35, 0x06  # BPF_LD|W|ABS, BPF_JMP|JEQ|K, BPF_JMP|JGE|K, BPF_RET|K
+    allow, deny, kill = 0x7FFF0000, 0x00050000 | 13, 0x80000000  # ALLOW, ERRNO(EACCES), KILL_PROCESS
+    prog = [
+        (ld, 0, 0, 4),  # seccomp_data.arch
+        (jeq, 0, 6, arch),  # wrong arch -> kill
+        (ld, 0, 0, 0),  # seccomp_data.nr
+        (jge, 3, 0, 0x40000000),  # x32 ABI -> deny
+        (jeq, 2, 0, sys_socket),
+        (jeq, 1, 0, 425),  # io_uring_setup (same number on both)
+        (ret, 0, 0, allow),
+        (ret, 0, 0, deny),
+        (ret, 0, 0, kill),
+    ]
+
+    class _Insn(ctypes.Structure):
+        _fields_ = [("code", ctypes.c_uint16), ("jt", ctypes.c_uint8), ("jf", ctypes.c_uint8), ("k", ctypes.c_uint32)]
+
+    class _Prog(ctypes.Structure):
+        _fields_ = [("len", ctypes.c_uint16), ("filter", ctypes.POINTER(_Insn))]
+
+    insns = (_Insn * len(prog))(*[_Insn(*i) for i in prog])
+    fprog = _Prog(len(prog), insns)
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.syscall.restype = ctypes.c_long
+    if libc.syscall(sys_seccomp, _SECCOMP_SET_MODE_FILTER, _SECCOMP_FILTER_FLAG_TSYNC, ctypes.byref(fprog)) != 0:
+        raise SystemExit(f"sandbox: seccomp filter failed (errno {ctypes.get_errno()}); refusing to run")
+
+
 def main():
     """Lock down, run the part code, export model.stl."""
     code_path, output_dir = sys.argv[1], os.path.realpath(sys.argv[2])
@@ -113,8 +154,9 @@ def main():
     resource.setrlimit(resource.RLIMIT_FSIZE, (100 << 20, 100 << 20))
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     abi = _landlock(output_dir)
+    _seccomp_no_sockets()
     sys.addaudithook(_deny)
-    print(f"sandbox: landlock ABI {abi}, tcp {'kernel-denied' if abi >= 4 else 'hook-denied'}", file=sys.stderr)
+    print(f"sandbox: landlock ABI {abi}, seccomp no-sockets, audit hook", file=sys.stderr)
 
     part = runpy.run_path(code_path, init_globals={"cq": cq}, run_name="__cadquery_part__")
     result = part.get("result")

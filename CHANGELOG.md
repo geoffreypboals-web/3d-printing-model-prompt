@@ -10,12 +10,15 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 - `src/threedprompt/cadquery_gen/`: LLM-written CadQuery code runs in a
   sandboxed subprocess (Landlock: writes only in the output folder, no
-  exec; audit hook: no sockets, subprocesses or ctypes; CPU, memory and
+  exec, TCP denied on ABI 4+; seccomp: `socket()` fails on any kernel;
+  audit hook: no sockets, subprocesses or ctypes; CPU, memory and
   file-size rlimits; empty environment). The exported STL must pass the
   watertight check, with one LLM retry. Refuses to run without Landlock.
-  Not routed from `POST /generate` yet. New dependency `cadquery==2.8.0`
-  (Apache-2.0; OCCT kernel LGPL-2.1 with exception); new setting
-  `CADQUERY_MEMORY_LIMIT_MB`.
+- `POST /generate` routes simple prompts with no OpenSCAD template to
+  CadQuery (`SIMPLE_LLM_BACKEND=cadquery`, the default), falling back to
+  LLM-authored OpenSCAD where the sandbox can't run. New dependency
+  `cadquery==2.8.0` (Apache-2.0; OCCT kernel LGPL-2.1 with exception); new
+  settings `SIMPLE_LLM_BACKEND`, `CADQUERY_MEMORY_LIMIT_MB`.
 
 ### Added (intake mesh check support, 2026-09-27)
 
