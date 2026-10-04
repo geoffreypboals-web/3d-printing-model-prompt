@@ -148,6 +148,11 @@ def _detect_template(prompt: str) -> str | None:
     return None
 
 
+def has_template(prompt: str) -> bool:
+    """True when a built-in template covers the prompt (no LLM call needed); main.py routes on this."""
+    return _detect_template(prompt) is not None
+
+
 def _render_template(template: str, prompt: str, wall_thickness_mm: float | None) -> str:
     """Fill a template's dimension placeholders from the prompt (or sensible defaults)."""
     wall_thickness = wall_thickness_mm or 3.0
