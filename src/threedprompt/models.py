@@ -52,6 +52,7 @@ class Backend(StrEnum):
 
     OPENSCAD = "openscad"
     BLENDER = "blender"
+    CADQUERY = "cadquery"
 
 
 @dataclass(frozen=True)
@@ -62,7 +63,7 @@ class GenerationResult:
     stl_path: str
     source_path: str | None
     """Path to the .scad source (OpenSCAD) or .py build script (Blender), if kept for regeneration."""
-    source_kind: Literal["openscad_scad", "blender_bpy_script"] | None
+    source_kind: Literal["openscad_scad", "blender_bpy_script", "cadquery_py"] | None
     wall_thickness_param: str | None
     """Name of the source-level variable that controls wall thickness, if the backend exposed one."""
 
