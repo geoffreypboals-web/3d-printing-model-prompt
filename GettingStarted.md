@@ -18,7 +18,8 @@ A FastAPI service (`src/threedprompt/`) that:
 - converts STEP to/from meshes and heals B-rep solids via FreeCAD
   (`/step/upload`, `/models/{id}/export-step`, `/models/{id}/repair-solid`);
 - renders PNG thumbnails (`POST /thumbnail`) and suggests library tags
-  (`POST /tags/suggest`) for 3dPrinterWorkshopManager;
+  (`POST /tags/suggest`) for 3dPrinterWorkshopManager, plus local
+  speech-to-text (`POST /transcribe`);
 - builds casting molds in four modes (`silicone_block`, `direct_cast`,
   `form_fitting`, `hollow_cast`) plus a draft/undercut check
   (`/models/{id}/mold`, `POST /mold`, `/models/{id}/mold/draft-check`).
@@ -36,36 +37,38 @@ takes `.ply .glb .gltf .fbx`).
 
 ## Quick start (Docker)
 
+Replace `<path-to>` with where you cloned the repo. Leave `OLLAMA_HOST`
+unset in `.env` - `docker-compose.yml` then points the app at the bundled
+`ollama` service (`http://ollama:11434`).
+
 Linux/Mac:
 
 ```bash
-cd /home/user/3d-printing-model-prompt && cp .env.example .env
-# edit .env: OLLAMA_HOST=http://ollama:11434
-cd /home/user/3d-printing-model-prompt && docker compose up --build
-cd /home/user/3d-printing-model-prompt && docker compose exec ollama ollama pull llama3.1
+cd <path-to>/3d-printing-model-prompt && cp .env.example .env && docker compose up --build -d && docker compose exec ollama ollama pull llama3.1
 ```
 
-Windows (PowerShell), from wherever you cloned the repo:
+Windows (PowerShell):
 
 ```powershell
-cd <path-to>\3d-printing-model-prompt; copy .env.example .env
-# edit .env: OLLAMA_HOST=http://ollama:11434
-cd <path-to>\3d-printing-model-prompt; docker compose up --build
+cd <path-to>d-printing-model-prompt; copy .env.example .env; docker compose up --build -d; docker compose exec ollama ollama pull llama3.1
 ```
 
 Then open `http://localhost:8000/` (browser UI), `/watertight.html`
 (hole viewer) or `/docs` (interactive API). `GET /health` reports whether
-OpenSCAD, Blender and the LLM are reachable.
+OpenSCAD, Blender, FreeCAD and the LLM are reachable.
 
-Already running Ollama natively? Set
-`OLLAMA_HOST=http://host.docker.internal:11434` and start only the app:
-`docker compose up --build --no-deps app`.
+Already running Ollama on the host? Set
+`OLLAMA_HOST=http://host.docker.internal:11434` (or your own port) in `.env`
+and start only the app (Linux/Mac, from the repo folder):
+`cd <path-to>/3d-printing-model-prompt && docker compose up --build -d --no-deps app`.
+Windows (PowerShell):
+`cd <path-to>d-printing-model-prompt; docker compose up --build -d --no-deps app`.
+More: [docs/AI_SETUP.md](docs/AI_SETUP.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Tests and lint
 
 ```bash
-cd /home/user/3d-printing-model-prompt && pip install -r requirements-dev.txt && pip install -e . && pytest -q
-cd /home/user/3d-printing-model-prompt && ruff check src tests && black --check src tests
+cd <path-to>/3d-printing-model-prompt && pip install -r requirements-dev.txt && pip install -e . && pytest -q && ruff check src tests && black --check src tests
 ```
 
 CAD/LLM calls are mocked; the `*_integration` tests only run when a real
