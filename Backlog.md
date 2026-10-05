@@ -10,6 +10,17 @@ had no Backlog.md yet).
 
 ## Needs scoping first
 
+### Mold-made products (planned 2026-10-05)
+
+Plan: `docs/mold-product-line-plan.md`. Products the existing mold modes
+can make (concrete planters, resin coasters, candles, soap, plaster
+plaques, resin keychains, selling molds, food last), ranked, with the rules
+to check before selling. This repo's part is Phase 1: a `cast_material`
+field on `MoldRequest` that fills density, refuses printed-mold modes for
+hot or heat-curing materials (wax in `direct_cast`), and an optional candle
+wick channel (ADR 0014 when built). Phase 0 (pilot planters and coasters)
+needs no code and comes first.
+
 ### Organic shapes: a real 3D generation model (considered 2026-09-29)
 The LLM-writes-CAD path (OpenSCAD, Blender) suits functional parts
 (dimensionally exact). For organic shapes the options that fit one 16 GB
