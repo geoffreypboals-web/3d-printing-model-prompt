@@ -6,6 +6,35 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ## [Unreleased]
 
+### Added (docs refresh, 2026-10-04)
+
+- `docs/ARCHITECTURE.md`, `docs/AI_SETUP.md`, `CONTRIBUTING.md`,
+  `SECURITY.md`, `CODE_OF_CONDUCT.md`; README now has Windows and Linux/Mac
+  quick starts, a configuration table, and the `/transcribe` endpoint;
+  `GettingStarted.md` and `TROUBLESHOOTING.md` corrected (compose
+  `OLLAMA_HOST` fallback, Ollama model/timeout, CadQuery and `/transcribe`
+  failure modes).
+
+### Changed (dependencies and CI, 2026-10-01 to 2026-10-04)
+
+- PR #13: dependency bumps to clear pip-audit findings (FastAPI/Starlette,
+  python-multipart, requests, dev tools).
+- PR #12 / WP-04: `.github/workflows/security.yml` (gitleaks over full
+  history, pip-audit, npm audit), `.gitleaks.toml`, `.pre-commit-config.yaml`.
+
+### Added (voice dictation, 2026-09-29)
+
+- `POST /transcribe`: local faster-whisper speech-to-text
+  (`WHISPER_MODEL`, `WHISPER_DEVICE`, `WHISPER_COMPUTE_TYPE`,
+  `WHISPER_MODEL_DIR`, `MAX_AUDIO_UPLOAD_BYTES`) for the farm manager's AI
+  Model Generator interview.
+
+### Fixed (2026-09-29)
+
+- `OLLAMA_HOST` no longer defaults to an address unreachable from Docker:
+  `docker-compose.yml` now uses `${OLLAMA_HOST:-http://ollama:11434}` and
+  `.env.example` ships the variable commented out (PR #10).
+
 ### Added (sandboxed CadQuery backend, 2026-10-01, board WP-18)
 
 - `src/threedprompt/cadquery_gen/`: LLM-written CadQuery code runs in a

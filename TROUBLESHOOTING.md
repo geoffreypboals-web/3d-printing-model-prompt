@@ -1,7 +1,9 @@
 # Troubleshooting
 
-Living log of non-obvious issues and their fixes for
-`/home/user/3d-printing-model-prompt`. Add to this whenever a real bug or
+Living log of non-obvious issues and their fixes for this repo
+(`3d-printing-model-prompt`; commands below assume you are in its root
+folder).  Related: [docs/AI_SETUP.md](docs/AI_SETUP.md),
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Add to this whenever a real bug or
 config problem gets solved, so it doesn't get re-debugged from scratch.
 
 ## `POST /thicken` (or the browser UI's "Thicken & download") fails with "upload exceeds MAX_UPLOAD_BYTES"
@@ -11,7 +13,7 @@ raised from 50MB to 300MB (dense/scanned STL meshes routinely exceed
 50MB), but any specific file can still be bigger than that. Set
 `MAX_UPLOAD_BYTES` in `.env` (in bytes) to whatever comfortably covers
 your files - e.g. `MAX_UPLOAD_BYTES=524288000` for 500MB - then restart:
-`docker compose up --build --no-deps app` (or `docker compose up --build`
+`docker compose up --build -d --no-deps app` (or `docker compose up --build -d`
 if using the bundled Ollama service). Note the whole upload is currently
 buffered in memory before being written to disk, so keep this within your
 container's available RAM rather than setting it arbitrarily high.
@@ -79,13 +81,54 @@ always a native (non-Docker) Ollama install already running. Two options:
    service on the host.
 
 **If you did set `OLLAMA_HOST` correctly but `/health` still reports
-`llm_reachable: false`**: this was a real bug in an earlier version of
-`docker-compose.yml` - it hardcoded `OLLAMA_HOST=http://ollama:11434` in
-the `app` service's `environment:` block, which silently overrode whatever
-was in `.env` (Compose's `environment:` always wins over `env_file:`).
-Fixed by removing that override so `.env` is the single source of truth
-(CLAUDE.md rule 22) - pull the latest `docker-compose.yml` if you still hit
-this.
+`llm_reachable: false`**: two real bugs bit here before. (1) An early
+`docker-compose.yml` hardcoded `OLLAMA_HOST=http://ollama:11434` in the
+`app` service's `environment:` block, which silently overrode `.env`
+(Compose's `environment:` always wins over `env_file:`). (2) A later
+`.env.example` shipped `OLLAMA_HOST=http://localhost:11434` uncommented;
+inside a container `localhost` is the container itself. Today the compose
+file sets `OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}` - a value in
+`.env` wins, and the bundled service is used only when `.env` leaves it
+unset - and `.env.example` ships it commented out. So an old `.env` that
+still has `OLLAMA_HOST=http://localhost:11434` is the likely culprit:
+delete or comment that line (or set the host-Ollama URL, e.g.
+`http://host.docker.internal:11434`), then recreate the container.
+
+## `/health` says `llm_reachable: true` but `POST /generate` returns 503 mentioning Ollama
+
+`/health` only calls Ollama's `GET /api/tags`; it does not check the model.
+`/generate` calls `POST /api/generate` with `OLLAMA_MODEL`, which must
+match `ollama list` exactly, tag included (e.g. `llama3.1:8b`). A model that
+isn't pulled, or a request that outlives `LLM_TIMEOUT_SECONDS` (default 60,
+easily exceeded on a GPU shared with other jobs), comes back as
+`Ollama request failed: ...` (HTTP 503). Pull/fix the model name, or raise
+`LLM_TIMEOUT_SECONDS`. See [docs/AI_SETUP.md](docs/AI_SETUP.md).
+
+## `POST /generate` returns 503 "Landlock unavailable" (CadQuery backend)
+
+Simple prompts with no OpenSCAD template go to the sandboxed CadQuery
+backend when `SIMPLE_LLM_BACKEND=cadquery` (the default).
+`main.py:_use_cadquery()` normally logs a warning and falls back to LLM-written
+OpenSCAD if the kernel has no Landlock (Linux 5.13+). A
+`CadQueryGenerationError` that still reaches the API (503) means the sandbox
+started and then failed: part code ran longer than
+`CAD_SUBPROCESS_TIMEOUT_SECONDS`, exceeded `CADQUERY_MEMORY_LIMIT_MB`, was
+not watertight after the one retry, or never assigned the finished part to
+`result`. The runner refuses to run unsandboxed - it never falls back to
+executing LLM code without Landlock/seccomp. Set `SIMPLE_LLM_BACKEND=openscad`
+to bypass CadQuery entirely.
+
+## `POST /transcribe` returns 503, 413 or 422
+
+- 503 "faster-whisper is not installed" / a download error: the Docker image
+  includes the package, but the Whisper model (`WHISPER_MODEL`, default
+  `base.en`, ~140 MB) is downloaded on the first request into
+  `WHISPER_MODEL_DIR` (default `<OUTPUT_DIR>/whisper-models`), so the
+  container needs internet once, or a pre-seeded model directory. The first
+  answer is slow while it downloads.
+- 413: recording over `MAX_AUDIO_UPLOAD_BYTES` (25 MB).
+- 422: extension not one of `transcription.SUPPORTED_EXTENSIONS`
+  (`.webm .ogg .oga .wav .mp3 .m4a .mp4`).
 
 ## `POST /generate` returns 503 with an OpenSCAD compiler error
 
@@ -267,6 +310,8 @@ the script if a caller wants it.
 volume in Compose) is the only place generated models live - there is no
 database and currently no automated backup. If you need durability beyond
 local disk, back up that directory/volume yourself
-(`docker run --rm -v threedprompt_output:/data -v $(pwd):/backup alpine tar
-czf /backup/output-backup.tar.gz -C /data .`) before any operation that
+(`docker run --rm -v threedprompt_output:/data -v "$(pwd)":/backup alpine tar
+czf /backup/output-backup.tar.gz -C /data .` in a bash shell; the volume is
+named `threedprompt_output` only if Compose runs from a folder-name-derived
+project that prefixes it - check `docker volume ls`) before any operation that
 might disrupt the volume (host rebuild, `docker compose down -v`, etc.).
