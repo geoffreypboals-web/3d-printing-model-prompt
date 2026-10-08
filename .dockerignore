@@ -1,0 +1,7 @@
+# Never copy secrets or local output into the image (the Dockerfile copies
+# only named paths today; this keeps it that way if that changes).
+.env
+.env.*
+!.env.example
+output/
+.git/
