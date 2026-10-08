@@ -723,3 +723,17 @@ for how to propose changes, and `CHANGELOG.md` for what's shipped and
 classifier, the wall-thickness strategy, the watertight hole-detection/
 repair feature, and the mold-generation feature. `GettingStarted.md` is the
 short quick start; `Requirements.md` tracks what's built vs. open.
+
+## Meshy model and prompt library
+
+`python3 scripts/meshy_library_sync.py` keeps every model made with Meshy and the
+prompt that made it in `/home/gboals/3d-printing-model-prompt/output/meshy_library/`
+(one folder per item: files, `PROMPT.md` with prompt, settings and notes,
+`record.json`; plus `index.md` and `index.csv`). With `--copy-to` it also copies
+new items to the commercial-licence folder on mastercomputerb. It needs
+`MESHY_API_KEY` in `.env` (never commit it). Meshy's download links expire a few
+days after a task finishes, so it runs daily from cron on lambda02:
+
+```
+17 6 * * * cd /home/gboals/3d-printing-model-prompt && python3 scripts/meshy_library_sync.py --copy-to 'mastercomputerb:C:/Users/maritime407/OneDrive/3d printing/01-Commercial License/00-boals made/Meshy library' >> output/meshy_library_sync.log 2>&1
+```
