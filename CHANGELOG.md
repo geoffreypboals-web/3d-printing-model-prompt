@@ -6,6 +6,19 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ## [Unreleased]
 
+### Added (spiral wand, 2026-10-11)
+
+- Spiral wand maker: `spiral_wand.py`, `POST /spiral-wand`,
+  `POST /models/{model_id}/spiral-wand/rider`,
+  `GET /models/{model_id}/parts/{filename}`,
+  `GET /models/{model_id}/spiral-wand.zip`, and the
+  `static/spiral-wand.html` GUI with a three.js viewer that animates the
+  rider spinning down the wand. Wand length, handle, rest gap ("handle
+  distance") and end cap (preset or any model) are configurable; riders
+  come from an upload, a prompt, or an existing model_id. New
+  dependencies: trimesh (MIT), manifold3d (Apache-2.0), networkx (BSD).
+  See `docs/adr/0014-spiral-wand-manifold3d.md`.
+
 ### Added (docs refresh, 2026-10-04)
 
 - `docs/ARCHITECTURE.md`, `docs/AI_SETUP.md`, `CONTRIBUTING.md`,

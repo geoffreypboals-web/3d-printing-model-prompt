@@ -5,8 +5,10 @@ Description: Minimal browser UI for the service, served at "/" by main.py
     (see the StaticFiles mount at the bottom of that file). Two forms:
     generate a model from a text prompt, and increase the wall thickness
     of a local file via a real file picker - both trigger a browser
-    download of the resulting STL. No build step, no external scripts/
-    CDNs (Docker-first, works fully offline once the container is up).
+    download of the resulting STL. Also links to the watertight checker
+    (watertight.html) and the spiral wand maker (spiral-wand.html). No
+    build step, no external scripts/CDNs (Docker-first, works fully
+    offline once the container is up).
 Inputs: User interaction (prompt text, file picker, amount_mm); calls the
     same-origin JSON API in main.py (POST /generate, POST /thicken,
     GET /models/{id}/download).
@@ -130,6 +132,17 @@ Troubleshooting:
       3D viewer.
     </p>
     <a href="/watertight.html"><button type="button">Open watertight checker</button></a>
+  </section>
+
+  <section>
+    <h2>Spiral wand &amp; spinning figurine</h2>
+    <p class="hint" style="margin-top:0">
+      Build a twisted wand (you pick its length, handle, rest gap and end
+      cap) and turn any figurine - uploaded, or generated from a prompt -
+      into a "rider" that threads onto it and spins all the way down.
+      Preview both in 3D and download the STLs.
+    </p>
+    <a href="/spiral-wand.html"><button type="button">Open spiral wand maker</button></a>
   </section>
 </main>
 

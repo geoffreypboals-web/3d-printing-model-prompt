@@ -359,6 +359,58 @@ See `docs/adr/0004-watertight-hole-detection-and-repair.md` for how the
 classification heuristic works and why it's a heuristic rather than an
 LLM/ML call.
 
+## Spiral wand & spinning figurines
+
+Makes a gravity "spinner" toy: a long twisted wand, plus **riders** -
+figurines with a matching twisted bore through them. Thread a rider onto
+the wand, hold it cap-up, let go, and the rider screws itself down the
+spiral, spinning as it falls, until it lands on the handle's stop flange.
+
+Open `http://localhost:8000/spiral-wand.html` for the GUI:
+
+- **Wand**: total length (or the spiral length directly), handle length
+  and diameter, the **handle distance** (the plain "rest gap" between the
+  handle stop and the spiral, where a rider lands and spins freely - set
+  it at least as tall as your rider), and the **end cap**: dome, disc,
+  cone, none, or your own model file scaled onto the tip. The cap is a
+  separate part on a one-way D-peg, because it has to come off to load
+  riders. A wand taller than *Max print height* is split inside the
+  spiral into D-pegged sections, with the twist continuous across each
+  joint.
+- **Rider**: upload a figurine (STL/OBJ/PLY/GLB), **generate one from a
+  prompt** (runs the normal `/generate` pipeline first), or reuse any
+  `model_id`. Set its height and which axis of the file points up; a
+  full-height sleeve around the bore keeps thin parts from breaking open,
+  and an optional round base helps figures that don't stand on their own.
+- **Viewer**: shows the assembled wand and rider in 3D. Drag the slider,
+  or press Play, to watch the rider spin down the spiral. Every part
+  downloads as STL, or all of them as one zip.
+
+The rod settings (diameter, lobes, lobe depth, pitch, spin direction,
+clearance) are shared: a rider only fits a wand built with the same
+values. The GUI warns if they differ. The default `clearance_mm` (0.45)
+and `pitch_mm` (120) are starting guesses, not print-tested values - print
+a short wand and one rider first and adjust.
+
+This needs no LLM, OpenSCAD, Blender or FreeCAD: `spiral_wand.py` builds
+everything in-process with manifold3d and trimesh (see
+`docs/adr/0014-spiral-wand-manifold3d.md`). The API:
+
+1. `POST /spiral-wand` with wand + rod settings (all optional, see
+   `/docs`) -> JSON with `model_id`, `parts[]` (each with `url`,
+   `z_offset_mm` in the assembled wand and `size_mm`), `notes[]`, and a
+   zip `download_url`. Set `cap_model_id` to use an uploaded or generated
+   model as the end cap.
+2. `POST /models/{model_id}/spiral-wand/rider` with rod + rider settings
+   -> the same JSON shape, with one `rider.stl` part. `model_id` is any
+   generated model or a `/watertight/upload` upload.
+3. `GET /models/{model_id}/parts/{filename}` downloads one part;
+   `GET /models/{model_id}/spiral-wand.zip` downloads them all.
+
+Meshes that aren't closed solids are lightly repaired (merged vertices,
+small holes filled, overlapping shells unioned); anything worse is
+rejected with a 422 that points you to the watertight checker.
+
 ## STEP conversion & solid healing
 
 Two FreeCAD-backed capabilities Blender can't provide at all:
@@ -456,6 +508,10 @@ Generator interview, so answers can be spoken instead of typed.
 | POST   | `/step/upload`                | multipart upload (`file`, `.step`/`.stp`) -> JSON w/ model_id (mesh)    |
 | POST   | `/models/{model_id}/export-step` | Converts the model's mesh to STEP -> **the STEP file**               |
 | POST   | `/models/{model_id}/repair-solid` | Heals B-rep topology via FreeCAD ShapeFix -> JSON, overwrites in place |
+| POST   | `/spiral-wand`                | Wand + rod settings (all optional) -> JSON w/ model_id, parts (URLs, assembly offsets), notes |
+| POST   | `/models/{model_id}/spiral-wand/rider` | Rod + rider settings -> JSON w/ new model_id and the rider part |
+| GET    | `/models/{model_id}/parts/{filename}` | Download one spiral wand / rider STL part                     |
+| GET    | `/models/{model_id}/spiral-wand.zip` | Download every part of a spiral wand / rider build as one zip  |
 | POST   | `/thumbnail`                  | multipart upload (`file`, `size`) -> **a PNG thumbnail**                |
 | POST   | `/tags/suggest`               | `{"file_name": "...", ...}` -> JSON w/ suggested tags + method          |
 | POST   | `/transcribe`                 | multipart upload (`file`, short audio) -> `{"text": "..."}` (local faster-whisper) |
@@ -691,7 +747,10 @@ This project is intended to be open source (CLAUDE.md rule 7), MIT licensed
 | `anthropic` (Python SDK) | MIT | only used if `LLM_PROVIDER=claude` |
 | `faster-whisper`, `ctranslate2`, `onnxruntime`, `tokenizers`, `huggingface-hub` | MIT / Apache-2.0 | `/transcribe`; Whisper model weights are MIT |
 | `av` (PyAV) | BSD-3-Clause | audio decoding for `/transcribe`; its wheels bundle FFmpeg shared libraries (LGPL) - dynamically linked, keep FFmpeg's notice if redistributing the image |
-| three.js r0.160.0 (vendored, `src/threedprompt/static/vendor/three/`) | MIT | watertight viewer; vendored not CDN-loaded, per rule 4 |
+| three.js r0.160.0 (vendored, `src/threedprompt/static/vendor/three/`) | MIT | watertight and spiral wand viewers; vendored not CDN-loaded, per rule 4 |
+| `trimesh` | MIT | mesh I/O and light repair for the spiral wand feature |
+| `manifold3d` | Apache-2.0 | in-process mesh booleans and twisted extrusions for the spiral wand feature |
+| `networkx` | BSD-3-Clause | used by trimesh's hole filling |
 | import_3dm v0.0.18 reader (vendored, `src/threedprompt/blender_scripts/vendor/rhino3dm_reader/`) | MIT | `.3dm` import inside Blender; license + `NOTICE.md` kept alongside |
 | `rhino3dm` (pip, installed into the image's system Python for Blender) | MIT | only needed for `.3dm` input |
 | OpenSCAD | GPL-2.0 | invoked as an external CLI process (subprocess), not linked into this codebase - GPL applies to OpenSCAD itself, not to this project |
@@ -721,5 +780,5 @@ Early stage (`0.1.0`, no tagged releases). See [CONTRIBUTING.md](CONTRIBUTING.md
 for how to propose changes, and `CHANGELOG.md` for what's shipped and
 `docs/adr/` for the reasoning behind the OpenSCAD/Blender split, the hybrid
 classifier, the wall-thickness strategy, the watertight hole-detection/
-repair feature, and the mold-generation feature. `GettingStarted.md` is the
+repair feature, the mold-generation feature, and the spiral wand feature. `GettingStarted.md` is the
 short quick start; `Requirements.md` tracks what's built vs. open.

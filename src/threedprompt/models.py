@@ -561,3 +561,114 @@ class RepairSolidResponse(BaseModel):
     valid_before: bool
     valid_after: bool
     download_url: str
+
+
+# --- Spiral wand: twisted wand + figurine riders (spiral_wand.py) ---
+# See docs/adr/0014-spiral-wand-manifold3d.md.
+
+
+class SpiralRodFields(BaseModel):
+    """Rod settings shared by the wand and its riders - a rider only fits a wand built with identical values."""
+
+    rod_diameter_mm: float = Field(14.0, ge=6, le=60, description="Outer diameter of the twisted rod (lobe tips).")
+    lobes: int = Field(3, ge=2, le=8, description="Number of lobes in the rod cross-section.")
+    lobe_depth_mm: float = Field(3.0, gt=0, le=20, description="How far the valleys sit below the lobe tips.")
+    pitch_mm: float = Field(
+        120.0,
+        ge=20,
+        le=2000,
+        description="Rod length per full 360-degree turn. Smaller = more spin per drop but more friction.",
+    )
+    handed: Literal["right", "left"] = Field("right", description="Spiral handedness (which way the rider spins).")
+    clearance_mm: float = Field(
+        0.45, ge=0.1, le=2.0, description="Radial gap per side between rod and rider bore (starting guess)."
+    )
+
+
+class SpiralWandRequest(SpiralRodFields):
+    """POST /spiral-wand request body."""
+
+    total_length_mm: float = Field(300.0, ge=60, le=3000, description="Overall length, handle bottom to cap top.")
+    spiral_length_mm: float | None = Field(
+        None, ge=10, le=3000, description="Set this instead of total_length_mm to fix the spiral length directly."
+    )
+    handle_length_mm: float = Field(90.0, ge=10, le=1000)
+    handle_diameter_mm: float = Field(24.0, ge=8, le=120)
+    handle_gap_mm: float = Field(
+        25.0,
+        ge=0,
+        le=1000,
+        description="Handle distance: plain neck between the handle stop and the spiral, where a rider rests. "
+        "Make it at least the rider's height for the rider to spin freely there.",
+    )
+    stop_diameter_mm: float = Field(30.0, ge=8, le=150, description="Flange at the top of the handle.")
+    stop_thickness_mm: float = Field(4.0, ge=1, le=50)
+    cap_style: Literal["dome", "disc", "cone", "none"] = Field(
+        "dome", description="End cap shape. Ignored when cap_model_id is given."
+    )
+    cap_model_id: str | None = Field(
+        None,
+        pattern=r"^[0-9a-f]{32}$",
+        description="Use an uploaded/generated model as the end cap (scaled to cap_diameter_mm wide, Z up).",
+    )
+    cap_diameter_mm: float = Field(26.0, ge=8, le=200)
+    cap_height_mm: float = Field(14.0, ge=2, le=200)
+    peg_length_mm: float = Field(10.0, ge=3, le=50, description="Length of the D-pegs at the cap and section joints.")
+    joint_clearance_mm: float = Field(0.15, ge=0, le=1.0, description="Radial gap in the D-peg sockets.")
+    max_print_height_mm: float = Field(
+        250.0, ge=50, le=2000, description="Tallest piece your printer can print standing up."
+    )
+
+
+class SpiralRiderRequest(SpiralRodFields):
+    """POST /models/{model_id}/spiral-wand/rider request body."""
+
+    height_mm: float | None = Field(
+        None, gt=0, le=1000, description="Scale the figurine to this height. Omit to use `scale`."
+    )
+    scale: float = Field(1.0, gt=0, le=1000, description="Scale factor, used when height_mm is not given.")
+    up_axis: Literal["z", "y", "x", "-z", "-y", "-x"] = Field(
+        "z", description="Which axis of the input file points up (y for many Blender/game exports)."
+    )
+    offset_x_mm: float = Field(0.0, ge=-500, le=500, description="Move the bore off the figurine's centre.")
+    offset_y_mm: float = Field(0.0, ge=-500, le=500)
+    rotate_deg: float = Field(0.0, ge=-360, le=360, description="Spin the figurine about the bore axis.")
+    collar: Literal["full", "base", "none"] = Field(
+        "full", description="Solid sleeve around the bore: whole height, bottom collar_height_mm only, or none."
+    )
+    collar_wall_mm: float = Field(2.4, ge=0.8, le=20)
+    collar_height_mm: float = Field(12.0, ge=1, le=500)
+    base_diameter_mm: float = Field(0.0, ge=0, le=500, description=">0 adds a round platform under the figurine.")
+    base_thickness_mm: float = Field(3.0, ge=0.8, le=50)
+
+
+class SpiralWandPart(BaseModel):
+    """One STL produced by spiral_wand.py, and where it sits in the assembled wand (for the viewer)."""
+
+    filename: str
+    role: Literal["wand", "cap", "rider"]
+    z_offset_mm: float = Field(description="Height of this part's z=0 in the assembled wand.")
+    size_mm: list[float]
+    url: str | None = None
+
+
+class SpiralWandResult(BaseModel):
+    """Output of spiral_wand.make_wand()/make_rider(); also the core of SpiralWandResponse."""
+
+    parts: list[SpiralWandPart]
+    notes: list[str] = Field(default_factory=list)
+    twist_deg_per_mm: float
+    total_length_mm: float | None = None
+    spiral_length_mm: float | None = None
+    spiral_turns: float | None = None
+    rest_z_mm: float | None = None
+    spiral_start_z_mm: float | None = None
+    spiral_end_z_mm: float | None = None
+    rider_height_mm: float | None = None
+
+
+class SpiralWandResponse(SpiralWandResult):
+    """POST /spiral-wand and POST /models/{model_id}/spiral-wand/rider response body."""
+
+    model_id: str
+    download_url: str
