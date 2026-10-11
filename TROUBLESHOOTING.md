@@ -315,3 +315,23 @@ czf /backup/output-backup.tar.gz -C /data .` in a bash shell; the volume is
 named `threedprompt_output` only if Compose runs from a folder-name-derived
 project that prefixes it - check `docker volume ls`) before any operation that
 might disrupt the volume (host rebuild, `docker compose down -v`, etc.).
+
+## Spiral wand: the rider is rejected, binds, or the sleeve shows
+
+- **422 "is not a closed solid"** from `/models/{id}/spiral-wand/rider`:
+  `spiral_wand.py` only does light repair (merging vertices, filling small
+  holes, unioning overlapping shells). Open the model in
+  `/watertight.html`, repair it, and build the rider from the repaired
+  `model_id`.
+- **The printed rider binds or won't drop:** raise `clearance_mm` (try
+  0.6) and rebuild *both* wand and rider with the same value, or raise
+  `pitch_mm` for a steeper spiral. The 0.45 mm / 120 mm defaults are
+  starting guesses, not print-tested values.
+- **"The bore sleeve shows over N% of the height":** the figurine is
+  slimmer than the bore wall there, so the sleeve is visible. Make the
+  rider taller (`height_mm`) or use a slimmer rod for both parts (for
+  example `rod_diameter_mm` 10 with `lobe_depth_mm` 2.2).
+- **The viewer animation shows the rider passing through the rod:** the
+  rider and wand were built with different rod settings; the GUI warns
+  about this. Rebuild one of them to match.
+
