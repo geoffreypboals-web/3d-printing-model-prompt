@@ -527,41 +527,57 @@ the result, since the response is the file itself.
 curl -X POST http://localhost:8000/generate \
   -H "Content-Type: application/json" \
   -d '{"prompt": "a mounting bracket for a raspberry pi, 60mm", "wall_thickness_mm": 3}'
+```
+
+```bash
 # => {"model_id": "...", "backend": "openscad", ...}
-
 curl -o bracket.stl http://localhost:8000/models/<model_id>/download
+```
 
+```bash
 curl -X POST http://localhost:8000/models/<model_id>/thicken \
   -H "Content-Type: application/json" -d '{"amount_mm": 1.5}'
+```
 
+```bash
 # load a file you already have, increase its wall thickness, and save the
 # result directly - one call, no separate download step:
 curl -X POST http://localhost:8000/thicken \
   -F "file=@my_model.stl" -F "amount_mm=1.5" \
   -o my_model_thickened.stl
+```
 
+```bash
 # same one-round-trip shape for mold generation - all params optional:
 curl -X POST http://localhost:8000/mold \
   -F "file=@my_model.stl" -F "clearance_mm=8" \
   -o my_model_mold.zip
+```
 
+```bash
 # direct-cast mode (no silicone step, 2 parts instead of 4):
 curl -X POST http://localhost:8000/mold \
   -F "file=@my_model.stl" -F "mode=direct_cast" -F "direct_mold_wall_mm=6" \
   -o my_model_direct_mold.zip
+```
 
+```bash
 # form-fitting mode (thin contour-hugging skin + support jacket, for
 # organic models a rigid direct_cast mold couldn't release):
 curl -X POST http://localhost:8000/mold \
   -F "file=@my_model.stl" -F "mode=form_fitting" -F "shell_thickness_mm=3" \
   -o my_model_form_fitting_mold.zip
+```
 
+```bash
 # hollow-cast mode (rigid outer mold + a core, for casting a hollow
 # vessel as a shell instead of a solid block):
 curl -X POST http://localhost:8000/mold \
   -F "file=@my_model.stl" -F "mode=hollow_cast" -F "cast_wall_thickness_mm=4" \
   -o my_model_hollow_cast_mold.zip
+```
 
+```bash
 # split along the model's own X axis instead of Z, offset 2mm toward the
 # max end, and estimate the cast's mass at 1.2 g/cm3 - X-Cavity-Volume-Cm3
 # and X-Estimated-Cast-Mass-G come back as response headers:
