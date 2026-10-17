@@ -6,7 +6,26 @@ had no Backlog.md yet).
 
 ## Ready to implement
 
-*(Nothing yet beyond the review findings below.)*
+### Print tools from the 3DPrintCAD review (planned 2026-10-17)
+
+Plan: `docs/print-tools-plan.md`. Owner asked to add these with plans to
+implement. Rule-based, no LLM, built like the spiral wand (manifold3d +
+trimesh, real-geometry tests). In order:
+
+1. **Split a model to fit the bed, with connectors** (M): cut planes chosen
+   so every piece fits, dowel holes or one-way D-pegs (reuse the wand's),
+   `POST /models/{id}/split`; the Workshop Manager's fit check offers it.
+2. **Overhang highlighting** (S): toggle in the three.js viewers, optional
+   `overhang_area_mm2` in `/analyze`.
+3. **Tool insert from a photo** (L): paper + calibration square → scaled
+   outline (OpenCV, Apache-2.0) → editable outline → pocket tray, Gridfinity
+   or custom.
+4. **Rule-based templates** (M each): Gridfinity bin, involute gears (own
+   code), lithophane (Pillow), QR tag (segno).
+5. **Multi-colour 3MF export** (M): one filament per part for the AMS and
+   CANVAS; slicer metadata research first.
+
+Not taken: a general sketch/constraint editor and sculpting.
 
 ## Needs scoping first
 
@@ -18,7 +37,7 @@ plaques, resin keychains, selling molds, food last), ranked, with the rules
 to check before selling. This repo's part is Phase 1: a `cast_material`
 field on `MoldRequest` that fills density, refuses printed-mold modes for
 hot or heat-curing materials (wax in `direct_cast`), and an optional candle
-wick channel (ADR 0014 when built). Phase 0 (pilot planters and coasters)
+wick channel (next free ADR number when built; 0014 is the spiral wand). Phase 0 (pilot planters and coasters)
 needs no code and comes first.
 
 ### Organic shapes: a real 3D generation model (considered 2026-09-29)

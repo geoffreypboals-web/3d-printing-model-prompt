@@ -697,6 +697,7 @@ are the code's. `.env.example` is the annotated template.
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - symptoms, causes, fixes
 - [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [CHANGELOG.md](CHANGELOG.md)
 - [Requirements.md](Requirements.md), [Backlog.md](Backlog.md), `docs/adr/` (design decisions)
+- [docs/print-tools-plan.md](docs/print-tools-plan.md) - planned print tools (split to fit, overhangs, photo tool inserts, templates, multi-colour 3MF)
 
 ## Running locally without Docker
 
