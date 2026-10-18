@@ -7,7 +7,8 @@ Description: Minimal browser UI for the service, served at "/" by main.py
     of a local file via a real file picker - both trigger a browser
     download of the resulting STL. Also links to the watertight checker
     (watertight.html), the spiral wand maker (spiral-wand.html), split
-    to fit (split.html) and the tool insert maker (tool-insert.html). No build step, no external scripts/CDNs
+    to fit (split.html), the tool insert maker (tool-insert.html) and the
+    print templates (templates.html). No build step, no external scripts/CDNs
     (Docker-first, works fully offline once the container is up).
 Inputs: User interaction (prompt text, file picker, amount_mm); calls the
     same-origin JSON API in main.py (POST /generate, POST /thicken,
@@ -163,6 +164,15 @@ Troubleshooting:
       pocket shaped like each tool.
     </p>
     <a href="/tool-insert.html"><button type="button">Open tool insert maker</button></a>
+  </section>
+
+  <section>
+    <h2>Print templates</h2>
+    <p class="hint" style="margin-top:0">
+      Parametric parts without AI: Gridfinity bins, involute gears and racks,
+      lithophanes from a photo, and raised QR tags (text, URL or Wi-Fi).
+    </p>
+    <a href="/templates.html"><button type="button">Open print templates</button></a>
   </section>
 </main>
 

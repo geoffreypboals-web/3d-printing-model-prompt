@@ -366,6 +366,25 @@ might disrupt the volume (host rebuild, `docker compose down -v`, etc.).
   crosses itself is filled by the non-zero rule; drag the crossing points
   apart and rebuild.
 
+## Print templates: gears bind, QR won't scan, lithophane too faint
+
+- **Gears bind or skip:** raise `backlash_mm` (0.15-0.25 for FDM), turn
+  off elephant's-foot compensation surprises by checking the first layer,
+  and keep the same module and pressure angle on both gears. Fewer than 17
+  teeth at 20 deg is weak at the root (undercut isn't modelled).
+- **Helical gears don't mesh:** the two gears need opposite helix angles;
+  the template does this for the mate, but a gear built on its own needs
+  `helix_angle_deg` negated for its partner.
+- **QR tag won't scan:** contrast is everything - dark code on a light
+  plate. Keep squares at 1.5 mm or more and the quiet zone at 2+ (4 is the
+  standard). A higher error-correction level makes a bigger code.
+- **Lithophane looks flat:** thicker maximum (3-3.2 mm) and thinner
+  minimum (0.6-0.8 mm), 100 % infill, and a light directly behind it.
+  "Too fine" errors: raise mm per pixel.
+- **Gridfinity bin loose/tight in a baseplate:** print one 1 x 1 x 3 test
+  bin first; the foot follows the spec's numbers but slicer XY
+  compensation varies.
+
 ## Overhang check: red faces where you didn't expect them
 
 - **The whole bottom is red:** the model's lowest point isn't flat on the
