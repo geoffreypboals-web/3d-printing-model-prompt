@@ -900,3 +900,41 @@ class QrTagRequest(BaseModel):
     keyring_hole: bool = True
     nfc_pocket: bool = False
     nfc_diameter_mm: float = Field(25.0, ge=10, le=60)
+
+
+# --- Multi-colour 3MF export (threemf.py) ---
+# See docs/print-tools-plan.md item 5.
+
+
+class ColourPart(BaseModel):
+    """One STL of a model and the filament it prints with."""
+
+    filename: str = Field(max_length=64)
+    color: str = Field("#F2F2F2", pattern="^#[0-9A-Fa-f]{6}$")
+    extruder: int = Field(1, ge=1, le=16, description="Filament slot (AMS / CANVAS), 1-based.")
+
+
+class Export3mfRequest(BaseModel):
+    """POST /models/{model_id}/export-3mf request body."""
+
+    parts: list[ColourPart] | None = Field(
+        None, max_length=64, description="Parts and filaments; null = every part of the model, one slot each."
+    )
+    assembled: bool = Field(True, description="One object with all parts in place, or each part separately.")
+    slicer: Literal["orca", "prusa"] = Field(
+        "orca",
+        description="orca: Bambu Studio / OrcaSlicer / Elegoo Slicer / Anycubic Slicer Next; prusa: PrusaSlicer "
+        "(they read multi-part objects differently).",
+    )
+
+
+class Export3mfResponse(BaseModel):
+    """POST /models/{model_id}/export-3mf response body."""
+
+    model_id: str
+    download_url: str
+    objects: int
+    parts: int
+    triangles: int
+    slicer: str
+    filaments: list[dict]

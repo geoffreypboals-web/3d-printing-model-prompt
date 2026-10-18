@@ -1,6 +1,6 @@
 # Print tools plan (ideas from the 3DPrintCAD review)
 
-Date: 2026-10-17. Status: items 1-4 built 2026-10-18 (`split.py`, overhang check, `tool_insert.py`, templates); item 5 planned.
+Date: 2026-10-17. Status: all five items built 2026-10-18 (`split.py`, overhang check, `tool_insert.py`, templates, `threemf.py`); Workshop Manager split button tracked there.
 
 ## Why
 

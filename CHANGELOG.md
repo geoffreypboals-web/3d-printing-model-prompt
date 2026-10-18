@@ -6,6 +6,17 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ## [Unreleased]
 
+### Added (multi-colour 3MF, 2026-10-18)
+
+- `threemf.py`, `POST /models/{model_id}/export-3mf`,
+  `GET /models/{model_id}/multicolour.3mf` and a *Multi-colour 3MF* panel
+  on `templates.html`: one 3MF with a colour and filament slot per part,
+  in the layout Bambu Studio / OrcaSlicer / Elegoo Slicer read ("orca",
+  default) or PrusaSlicer's ("prusa"); see ADR 0015. PrusaSlicer output is
+  tested by slicing when `prusa-slicer` is installed. Dev dependency
+  `lib3mf` (BSD-2-Clause) for tests. Plan item 5 of
+  `docs/print-tools-plan.md`.
+
 ### Added (print templates, 2026-10-18)
 
 - `static/templates.html` and `POST /templates/{gridfinity-bin,gear,lithophane,qr-tag}`:

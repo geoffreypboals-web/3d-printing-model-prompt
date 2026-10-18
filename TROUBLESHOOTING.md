@@ -366,6 +366,19 @@ might disrupt the volume (host rebuild, `docker compose down -v`, etc.).
   crosses itself is filled by the non-zero rule; drag the crossing points
   apart and rebuild.
 
+## Multi-colour 3MF: everything on one filament, or parts fall apart
+
+- **Bambu Studio / Orca / Elegoo puts every part on filament 1:** open the
+  3MF on its own (File > Open, or drop it on an empty plate). Importing it
+  into an existing project can keep only the geometry. Also check it was
+  exported with slicer "orca".
+- **PrusaSlicer shows separate objects and the top part drops to the
+  bed:** export with slicer "prusa"; PrusaSlicer doesn't keep components
+  together (ADR 0015).
+- **Wrong colours in the slicer:** the slot numbers decide the filament,
+  not the colours; the colours are only a preview. Map slots to your AMS /
+  CANVAS spools in the slicer.
+
 ## Print templates: gears bind, QR won't scan, lithophane too faint
 
 - **Gears bind or skip:** raise `backlash_mm` (0.15-0.25 for FDM), turn
