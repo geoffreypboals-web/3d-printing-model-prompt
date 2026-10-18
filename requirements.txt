@@ -11,3 +11,4 @@ trimesh==5.1.1
 manifold3d==3.5.4
 networkx==3.5
 opencv-python-headless==4.13.0.92
+segno==1.6.6

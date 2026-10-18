@@ -5,7 +5,8 @@ Description: FastAPI application wiring together the classifier, the two
     generation backends (OpenSCAD for simple parts, Blender for complex
     ones), the wall-thickness endpoints, the mold-generation endpoints,
     the spiral wand endpoints (twisted wand + figurine riders), the
-    split-to-fit endpoint, the tool-insert-from-a-photo endpoints, and the
+    split-to-fit endpoint, the tool-insert-from-a-photo endpoints, the
+    rule-based templates (/templates/...), and the
     watertight analysis/repair endpoints. This is the only
     HTTP-facing module - it does no CAD/LLM work itself, only routing,
     validation, and translating domain errors into HTTP responses. Also
@@ -57,6 +58,9 @@ Troubleshooting:
     - 422 from /tool-insert/trace or /tool-insert carries tool_insert.py's
       message (unreadable photo, no tools found, a bad outline); 413 means
       the photo is over MAX_IMAGE_UPLOAD_BYTES (25 MB).
+    - 422 from /templates/... carries the template's own message (settings
+      that can't make a printable part, content too long for a QR code,
+      an unreadable lithophane image).
     - 422 from /spiral-wand or /models/{id}/spiral-wand/rider carries
       spiral_wand.py's own message (impossible dimensions, or a mesh
       that isn't a closed solid - repair it in /watertight.html first).
@@ -82,9 +86,13 @@ from threedprompt import (
     cadquery_gen,
     draft_analysis,
     freecad_cad,
+    gear,
     geometry,
+    gridfinity,
+    lithophane,
     mold,
     openscad_generator,
+    qr_tag,
     spiral_wand,
     split,
     storage,
@@ -101,6 +109,7 @@ from threedprompt.classifier import classify_prompt
 from threedprompt.config import settings
 from threedprompt.draft_analysis import DraftAnalysisError
 from threedprompt.freecad_cad import FreeCADCADError
+from threedprompt.geometry import TemplateError
 from threedprompt.llm_client import LLMError, get_llm_client
 from threedprompt.logging_config import configure_logging, get_logger
 from threedprompt.models import (
@@ -111,14 +120,18 @@ from threedprompt.models import (
     DraftCheckResponse,
     DraftReport,
     FlippedNormalIsland,
+    GearRequest,
     GenerateRequest,
     GenerateResponse,
+    GridfinityBinRequest,
     HealthResponse,
     Hole,
     HoleClassification,
+    LithophaneRequest,
     MoldRequest,
     MoldResponse,
     OverhangResponse,
+    QrTagRequest,
     RepairRequest,
     RepairResponse,
     RepairSolidResponse,
@@ -131,6 +144,8 @@ from threedprompt.models import (
     SplitResult,
     TagSuggestRequest,
     TagSuggestResponse,
+    TemplateResponse,
+    TemplateResult,
     ThickenRequest,
     ThickenResponse,
     ToolInsertRequest,
@@ -969,7 +984,10 @@ def _any_model_file(model_id: str) -> Path:
 
 _MODEL_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 # Part files the in-process tools write; GET /models/{id}/parts/{filename} serves only these.
-_PART_RE = re.compile(r"^(wand_body|wand_section\d{1,2}|wand_cap|rider|part_\d{2}|dowel_pin|tool_insert)\.stl$")
+_PART_RE = re.compile(
+    r"^(wand_body|wand_section\d{1,2}|wand_cap|rider|part_\d{2}|dowel_pin|tool_insert"
+    r"|gridfinity_bin|gear|gear_mate|rack|lithophane|qr_tag|qr_plate|qr_code)\.stl$"
+)
 _SPIRAL_ZIP_NAME = "spiral_wand.zip"
 
 
@@ -1063,7 +1081,7 @@ def download_spiral_wand_zip(model_id: str) -> FileResponse:
 
 @app.get("/models/{model_id}/parts/{filename}")
 def download_part(model_id: str, filename: str) -> FileResponse:
-    """Download one STL part of a spiral wand, rider, split or tool insert build (used by the browser viewers)."""
+    """Download one STL part of a wand, rider, split, tool insert or template build (used by the browser viewers)."""
     if not _PART_RE.match(filename):
         raise HTTPException(status_code=404, detail=f"no part named {filename!r}")
     path = _checked_model_dir(model_id) / filename
@@ -1155,6 +1173,80 @@ def build_tool_insert(request: ToolInsertRequest) -> ToolInsertResponse:
     storage.save_spec(new_model_id, {"method": "tool_insert", "params": request.model_dump()})
     parts = [part.model_copy(update={"url": f"/models/{new_model_id}/parts/{part.filename}"}) for part in result.parts]
     return ToolInsertResponse(**result.model_dump(exclude={"parts"}), parts=parts, model_id=new_model_id)
+
+
+# --- Rule-based templates (gridfinity.py, gear.py, lithophane.py, qr_tag.py) ---
+
+_LITHO_FIELDS = LithophaneRequest.model_fields
+
+
+def _run_template(method: str, build, spec_params: dict) -> TemplateResponse:
+    """Run a template builder in a new model dir; 422 with its message on TemplateError."""
+    new_model_id, new_dir = storage.new_model_dir()
+    try:
+        result: TemplateResult = build(new_dir)
+    except TemplateError as exc:
+        shutil.rmtree(new_dir, ignore_errors=True)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    storage.save_spec(new_model_id, {"method": method, "params": spec_params})
+    parts = [part.model_copy(update={"url": f"/models/{new_model_id}/parts/{part.filename}"}) for part in result.parts]
+    return TemplateResponse(**result.model_dump(exclude={"parts"}), parts=parts, model_id=new_model_id)
+
+
+@app.post("/templates/gridfinity-bin", response_model=TemplateResponse)
+def template_gridfinity_bin(request: GridfinityBinRequest) -> TemplateResponse:
+    """Gridfinity bin: grid units, height units, compartments, stacking lip, label tabs, magnet holes."""
+    params = request.model_dump()
+    return _run_template("gridfinity_bin", lambda d: gridfinity.make_bin(d, **params), params)
+
+
+@app.post("/templates/gear", response_model=TemplateResponse)
+def template_gear(request: GearRequest) -> TemplateResponse:
+    """Involute spur/helical gear, optional mating gear (placed in mesh) and rack, with a mesh report."""
+    params = request.model_dump()
+    return _run_template("gear", lambda d: gear.make_gears(d, **params), params)
+
+
+@app.post("/templates/qr-tag", response_model=TemplateResponse)
+def template_qr_tag(request: QrTagRequest) -> TemplateResponse:
+    """Raised QR code on a plate (text/URL or Wi-Fi), plus separate plate and code STLs for two colours."""
+    params = request.model_dump()
+    # The Wi-Fi password is printed into the code but never stored in the spec.
+    spec = {k: v for k, v in params.items() if k != "password"}
+    return _run_template("qr_tag", lambda d: qr_tag.make_qr_tag(d, **params), spec)
+
+
+@app.post("/templates/lithophane", response_model=TemplateResponse)
+async def template_lithophane(
+    file: UploadFile = _UPLOAD_FILE,
+    shape: str = Form(_LITHO_FIELDS["shape"].default, pattern="^(flat|curved|cylinder)$"),
+    width_mm: float = Form(_LITHO_FIELDS["width_mm"].default),
+    min_thickness_mm: float = Form(_LITHO_FIELDS["min_thickness_mm"].default),
+    max_thickness_mm: float = Form(_LITHO_FIELDS["max_thickness_mm"].default),
+    resolution_mm: float = Form(_LITHO_FIELDS["resolution_mm"].default),
+    frame_mm: float = Form(_LITHO_FIELDS["frame_mm"].default),
+    curve_deg: float = Form(_LITHO_FIELDS["curve_deg"].default),
+) -> TemplateResponse:
+    """Lithophane from an image (darker = thicker): flat, curved or cylinder, with an optional frame."""
+    try:
+        request = LithophaneRequest(
+            shape=shape,
+            width_mm=width_mm,
+            min_thickness_mm=min_thickness_mm,
+            max_thickness_mm=max_thickness_mm,
+            resolution_mm=resolution_mm,
+            frame_mm=frame_mm,
+            curve_deg=curve_deg,
+        )
+    except ValueError as exc:  # pydantic.ValidationError; form fields are validated here, not by FastAPI
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    content = await file.read()
+    if len(content) > _MAX_IMAGE_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"image exceeds {_MAX_IMAGE_UPLOAD_BYTES // (1024 * 1024)} MB")
+    params = request.model_dump()
+    return await run_in_threadpool(
+        _run_template, "lithophane", lambda d: lithophane.make_lithophane(content, d, **params), params
+    )
 
 
 @app.get("/models/{model_id}/overhangs", response_model=OverhangResponse)
