@@ -8,7 +8,9 @@ Description: Single-page three.js viewer for the watertight analysis/
     green = likely an intentional opening, amber = ambiguous) placed at
     its centroid, click a marker or its row in the side panel to toggle
     "close this one", then submit the selection to
-    /models/{id}/repair and download the result once it's watertight.
+    /models/{id}/repair and download the result once it's watertight. The
+    "show overhangs" toggle paints faces that need support in red (the GLB
+    is Y-up, so +Y is up there).
 Inputs: Served by main.py's StaticFiles mount; talks to that same
     origin's /watertight/* and /models/{id}/* endpoints. No inputs of
     its own beyond user interaction.

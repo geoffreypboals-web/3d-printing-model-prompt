@@ -4,7 +4,9 @@ File: /home/user/3d-printing-model-prompt/src/threedprompt/static/viewer-kit.js
 Description: Shared helpers for the three.js tool pages (split.html, and
     the print-tool pages that follow - see docs/print-tools-plan.md):
     API calls with readable errors, binary STL loading, and a Z-up viewer
-    (scene, orbit camera, lights, bed grid, framing, resize, render loop).
+    (scene, orbit camera, lights, bed grid, framing, resize, render loop),
+    plus setOverhangs(): a red overlay on faces that need support, also
+    used by spiral-wand.html and watertight.html.
 Inputs: ES module imports from the page; the page's own DOM elements.
 Outputs: Exported functions/classes; no side effects at import time.
 Troubleshooting:

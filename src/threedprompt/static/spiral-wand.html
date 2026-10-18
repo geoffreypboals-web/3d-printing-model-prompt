@@ -7,7 +7,8 @@ Description: Browser GUI + three.js viewer for the spiral wand feature
     uploaded figurine, a model generated from a text prompt, or an
     existing model_id; then see the assembled wand in 3D and play the
     rider spinning down the spiral. Every part downloads as STL, or all
-    together as a zip.
+    together as a zip. The "overhangs" toggle paints faces that need
+    support in red (viewer-kit.js setOverhangs).
 Inputs: User interaction; calls the same-origin API in main.py:
     POST /spiral-wand, POST /watertight/upload, POST /generate,
     POST /models/{id}/spiral-wand/rider, GET /models/{id}/parts/{file}.

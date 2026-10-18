@@ -35,7 +35,7 @@ flowchart LR
 | `thickness.py`, `freecad_cad.py` | Wall thickening: OpenSCAD source regeneration -> FreeCAD Part Thickness (`.stl` only) -> Blender Solidify. FreeCAD also does STEP import/export and solid healing (ADR 0012). |
 | `watertight.py`, `hole_classifier.py` | Hole/flipped-normal detection, heuristic intentional-vs-defect classification, repair, `viewer.glb` export. |
 | `mold.py`, `draft_analysis.py` | Four mold modes, auto-repair before building, draft/undercut check, volume/mass reporting (ADRs 0005-0011). |
-| `geometry.py`, `split.py` | Shared manifold3d/trimesh helpers; split a model to fit the bed with dowel/D-peg connectors (`static/split.html`, shared viewer code in `static/viewer-kit.js`). |
+| `geometry.py`, `split.py` | Shared manifold3d/trimesh helpers and the overhang measure (`GET /models/{id}/overhangs`; red overlay toggle in the tool pages via `viewer-kit.js`); split a model to fit the bed with dowel/D-peg connectors (`static/split.html`, shared viewer code in `static/viewer-kit.js`). |
 | `spiral_wand.py` | Spiral wand + figurine riders, built in-process with manifold3d/trimesh (no CAD subprocess, no LLM); GUI and viewer in `static/spiral-wand.html` (ADR 0014). |
 | `thumbnail.py`, `tag_suggester.py`, `transcription.py` | Library helpers for 3dPrinterWorkshopManager: PNG thumbnails, text-only LLM tag suggestions (heuristic fallback), local speech-to-text. |
 | `storage.py` | Model folders, `spec.json`, prompt cache, zip helper. |

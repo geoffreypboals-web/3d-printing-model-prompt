@@ -434,6 +434,18 @@ how to lay it on the bed. API: `POST /models/{model_id}/split` (see
 `GET /models/{model_id}/split.zip`. Built in-process with manifold3d like
 the spiral wand; plan: `docs/print-tools-plan.md` item 1.
 
+## Overhang check
+
+The split, spiral wand and watertight pages have an **overhangs** toggle
+that paints in red every face pointing down more steeply than 45 deg from
+vertical (the split page lets you change the angle): the parts that need
+support if printed as shown. Faces lying on the bed are ignored, and each
+split piece or wand part is checked on its own bed since they print
+separately. `GET /models/{model_id}/overhangs?angle_deg=45` returns the same
+measure for any model: `overhang_area_mm2`, `total_area_mm2`,
+`overhang_fraction` and `overhang_face_count`, printed Z up as stored.
+Plan: `docs/print-tools-plan.md` item 2.
+
 ## STEP conversion & solid healing
 
 Two FreeCAD-backed capabilities Blender can't provide at all:
@@ -535,6 +547,7 @@ Generator interview, so answers can be spoken instead of typed.
 | POST   | `/models/{model_id}/spiral-wand/rider` | Rod + rider settings -> JSON w/ new model_id and the rider part |
 | GET    | `/models/{model_id}/parts/{filename}` | Download one spiral wand, rider or split STL part             |
 | POST   | `/models/{model_id}/split`    | Bed size + connector settings -> JSON w/ new model_id, pieces (fit + print hint), zip URL |
+| GET    | `/models/{model_id}/overhangs` | `?angle_deg=45` -> JSON: area/fraction of the surface that needs support (Z up) |
 | GET    | `/models/{model_id}/split.zip` | Download every piece of a split (and the dowel pin) as one zip         |
 | GET    | `/models/{model_id}/spiral-wand.zip` | Download every part of a spiral wand / rider build as one zip  |
 | POST   | `/thumbnail`                  | multipart upload (`file`, `size`) -> **a PNG thumbnail**                |

@@ -6,6 +6,16 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ## [Unreleased]
 
+### Added (overhang check, 2026-10-18)
+
+- Overhang highlighting: an **overhangs** toggle on `split.html`,
+  `spiral-wand.html` and `watertight.html` paints faces steeper than 45 deg
+  from vertical (adjustable on the split page) in red, ignoring faces on the
+  bed. Shared code in `static/viewer-kit.js` (`setOverhangs`).
+- `GET /models/{model_id}/overhangs`: overhang area, total area, fraction
+  and face count (`geometry.overhang_report`). Plan item 2 of
+  `docs/print-tools-plan.md`.
+
 ### Added (split to fit, 2026-10-18)
 
 - `split.py`, `POST /models/{model_id}/split`, `GET /models/{model_id}/split.zip`

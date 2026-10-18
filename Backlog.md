@@ -15,7 +15,7 @@ trimesh, real-geometry tests). In order:
 1. **DONE 2026-10-18 — Split a model to fit the bed, with connectors** (M): cut planes chosen
    so every piece fits, dowel holes or one-way D-pegs (reuse the wand's),
    `POST /models/{id}/split`; the Workshop Manager's fit check offers it.
-2. **Overhang highlighting** (S): toggle in the three.js viewers, optional
+2. **DONE 2026-10-18 — Overhang highlighting** (S): toggle in the three.js viewers, optional
    `overhang_area_mm2` in `/analyze`.
 3. **Tool insert from a photo** (L): paper + calibration square → scaled
    outline (OpenCV, Apache-2.0) → editable outline → pocket tray, Gridfinity
