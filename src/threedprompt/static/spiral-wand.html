@@ -130,6 +130,7 @@ Troubleshooting:
     <button id="playBtn" type="button" class="secondary" disabled>&#9654; Play</button>
     <input id="riderPos" type="range" min="0" max="1" step="0.001" value="0" disabled aria-label="Rider position">
     <span id="posLabel">build a wand and a rider</span>
+    <label style="display:inline-flex;gap:4px;align-items:center;white-space:nowrap" title="Faces steeper than 45 deg from vertical need support"><input id="showOver" type="checkbox"> overhangs</label>
   </div>
 </div>
 <div id="sidebar">
@@ -230,6 +231,7 @@ Troubleshooting:
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
+import { setOverhangs } from "/viewer-kit.js";
 
 const ROD_FIELDS = ["rod_diameter_mm", "lobes", "lobe_depth_mm", "pitch_mm", "handed", "clearance_mm"];
 const WAND_FIELDS = ["total_length_mm", "spiral_length_mm", "handle_length_mm", "handle_diameter_mm", "handle_gap_mm",
@@ -457,6 +459,17 @@ function refreshPanel() {
   if (!downloadsEl.children.length) downloadsEl.innerHTML = '<span class="hint" style="margin:0">Nothing built yet.</span>';
 }
 
+// Red overlay on faces that need support. Each part prints on its own, so each is
+// checked against its own lowest point (the rider and cap are printed flat side down).
+function refreshOverhangs() {
+  const enabled = $("showOver").checked;
+  const parts = [];
+  if (wandBuild) parts.push(...wandBuild.group.children);
+  if (riderBuild) parts.push(riderBuild.mesh);
+  for (const m of parts) setOverhangs([m], { enabled });
+}
+$("showOver").addEventListener("change", refreshOverhangs);
+
 // --- build actions ---------------------------------------------------------------
 $("cap_style").addEventListener("change", () => {
   $("capFileField").classList.toggle("hidden", $("cap_style").value !== "custom");
@@ -496,6 +509,7 @@ $("wandBtn").addEventListener("click", async () => {
     if (wandBuild) scene.remove(wandBuild.group);
     scene.add(group);
     wandBuild = { response, rodKey: JSON.stringify(rod), group };
+    refreshOverhangs();
     setStatus(`Wand built: ${response.total_length_mm} mm long, spiral ${response.spiral_length_mm} mm `
       + `(${response.spiral_turns} turns), ${response.parts.length} part(s).`, "ok");
     refreshPanel();
@@ -537,6 +551,7 @@ $("riderBtn").addEventListener("click", async () => {
     if (riderBuild) scene.remove(riderBuild.mesh);
     scene.add(mesh);
     riderBuild = { response, rodKey: JSON.stringify(rod), mesh };
+    refreshOverhangs();
     setStatus(`Rider built: ${response.rider_height_mm} mm tall. Press Play to drop it down the wand.`, "ok");
     refreshPanel();
     refreshPlaybar();

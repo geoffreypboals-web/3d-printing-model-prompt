@@ -5,8 +5,9 @@ Description: Shared in-process mesh helpers for the manifold3d-based
     features (spiral_wand.py, split.py and the print tools that follow,
     see docs/print-tools-plan.md): loading and lightly repairing a mesh
     file into one valid solid, converting between trimesh and manifold3d,
-    STL export, primitive builders (cylinders, one-way D-pegs) and the
-    "does this fit a print bed in any orientation" test.
+    STL export, primitive builders (cylinders, one-way D-pegs), the
+    "does this fit a print bed in any orientation" test and the overhang
+    (needs-support) measurement.
 Inputs: Mesh file paths (SUPPORTED_EXTENSIONS) and manifold3d solids.
 Outputs: manifold3d solids, STL files, plain Python values.
 Troubleshooting:
@@ -102,6 +103,38 @@ def fit_orientation(dims: list[float] | np.ndarray, bed: list[float], margin: fl
         if all(dims[perm[i]] + margin <= bed[i] for i in range(3)):
             return perm
     return None
+
+
+def overhang_report(mesh: trimesh.Trimesh, angle_deg: float = 45.0, bed_tolerance: float = 0.3) -> dict:
+    """
+    Measure the surface that would need support when printed as oriented (Z up).
+
+    A face needs support when it points down more steeply than `angle_deg`
+    from vertical (the usual 45 deg rule); faces lying on the bed (within
+    `bed_tolerance` mm of the lowest point) don't count.
+
+    Args:
+        mesh: the model, in print orientation.
+        angle_deg: overhang angle from vertical beyond which support is needed.
+        bed_tolerance: height above the lowest point still counted as "on the bed", in mm.
+    Returns:
+        {"overhang_area_mm2", "total_area_mm2", "overhang_fraction", "overhang_face_count", "angle_deg"}.
+    """
+    normals = mesh.face_normals
+    areas = mesh.area_faces
+    face_z = mesh.vertices[mesh.faces][:, :, 2]
+    on_bed = face_z.max(axis=1) - mesh.bounds[0][2] <= bed_tolerance
+    steep = -normals[:, 2] > np.sin(np.radians(angle_deg))
+    flagged = steep & ~on_bed
+    total = float(areas.sum())
+    over = float(areas[flagged].sum())
+    return {
+        "overhang_area_mm2": round(over, 2),
+        "total_area_mm2": round(total, 2),
+        "overhang_fraction": round(over / total, 4) if total else 0.0,
+        "overhang_face_count": int(flagged.sum()),
+        "angle_deg": angle_deg,
+    }
 
 
 def load_solid(path: Path) -> mf.Manifold:
