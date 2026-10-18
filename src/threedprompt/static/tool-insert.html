@@ -1,0 +1,411 @@
+<!--
+Project: 3D Printing Model Prompt
+File: /home/user/3d-printing-model-prompt/src/threedprompt/static/tool-insert.html
+Description: GUI for the tool insert from a photo (tool_insert.py), linked
+    from index.html. Upload a photo of tools on white paper with a dark
+    calibration square; the traced outlines are drawn over the corrected
+    photo, where points can be dragged, tools switched off, finger notches
+    added, and the scale set by hand. "Build insert" sends the edited
+    outlines to the server and shows the tray in a three.js viewer.
+Inputs: User interaction; calls POST /tool-insert/trace, POST /tool-insert,
+    GET /models/{id}/parts/tool_insert.stl on this origin.
+Outputs: None (a browser page) - the STL lives under the returned model_id.
+Troubleshooting:
+    - "Calibration square not found": use the "Set scale" tool - click two
+      points on the photo a known distance apart (e.g. the paper's edge).
+    - A notch lands in the wrong place: notches are placed where you click
+      on the photo; switch back to "Move points" to stop adding them, and
+      right-click a notch to delete it.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tool Insert</title>
+<style>
+  :root { --bg: #f7f7f8; --panel-bg: #ffffff; --border: #e2e2e6; --text: #1c1c1f; --text-dim: #6b6b73;
+          --accent: #3d6bff; --error: #e5484d; --ok: #2fae5c; --warn: #b7791f; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #16161a; --panel-bg: #1f1f24; --border: #313138; --text: #ececef;
+                                      --text-dim: #9a9aa2; --warn: #e0a640; }
+  }
+  :root[data-theme="dark"] { --bg: #16161a; --panel-bg: #1f1f24; --border: #313138; --text: #ececef;
+                             --text-dim: #9a9aa2; --warn: #e0a640; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden;
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  #main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #editorWrap { flex: 1; min-height: 0; position: relative; overflow: hidden; border-bottom: 1px solid var(--border); }
+  #editor { display: block; width: 100%; height: 100%; touch-action: none; }
+  #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 24px;
+           text-align: center; color: var(--text-dim); font-size: 13px; pointer-events: none; }
+  #viewport { flex: 1; min-height: 0; position: relative; }
+  #viewport canvas { display: block; width: 100%; height: 100%; }
+  #sidebar { width: 380px; flex-shrink: 0; background: var(--panel-bg); border-left: 1px solid var(--border);
+             padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+  @media (max-width: 800px) {
+    body { flex-direction: column; height: auto; overflow: auto; }
+    #main { flex: none; }
+    #editorWrap { height: 55vh; flex: none; }
+    #viewport { height: 45vh; flex: none; }
+    #sidebar { width: 100%; border-left: none; border-top: 1px solid var(--border); }
+  }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  h1 a { color: var(--text-dim); font-size: 12px; font-weight: normal; margin-left: 8px; }
+  fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px 12px; margin: 0; }
+  legend { font-size: 12px; font-weight: 600; padding: 0 4px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+  .grid label, .field label { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--text-dim); }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  input[type="number"], input[type="text"], select { font: inherit; font-size: 13px; padding: 5px 7px; border-radius: 6px;
+         border: 1px solid var(--border); background: var(--bg); color: var(--text); width: 100%; }
+  input[type="file"] { font-size: 12px; max-width: 100%; }
+  .hint { font-size: 11.5px; color: var(--text-dim); margin: 6px 0 0; }
+  button { font-size: 13px; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border);
+           background: var(--accent); color: white; cursor: pointer; margin-top: 10px; }
+  button.secondary { background: var(--bg); color: var(--text); }
+  button:disabled { opacity: 0.45; cursor: default; }
+  .radios { display: flex; gap: 12px; font-size: 12.5px; flex-wrap: wrap; }
+  .radios label { display: inline-flex; gap: 4px; align-items: center; }
+  #status { font-size: 12px; color: var(--text-dim); white-space: pre-wrap; }
+  #status.error { color: var(--error); }
+  #status.ok { color: var(--ok); }
+  .notes { font-size: 12px; color: var(--warn); margin: 0; padding-left: 18px; }
+  #toolList { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; margin-top: 6px; }
+  #toolList label { display: flex; gap: 6px; align-items: center; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="main">
+  <div id="editorWrap">
+    <canvas id="editor" aria-label="Photo with traced tool outlines"></canvas>
+    <div id="empty">Upload a photo of your tools on white paper, with a solid dark square of known size beside them.</div>
+  </div>
+  <div id="viewport"></div>
+</div>
+<div id="sidebar">
+  <div>
+    <h1>Tool Insert <a href="/">&larr; back</a></h1>
+    <p class="hint" style="margin-top:0">Photo of tools &rarr; a tray with a pocket shaped like each one. Lay the
+      tools on white paper with a dark calibration square, shoot from above, then fix the outlines here.</p>
+  </div>
+
+  <fieldset>
+    <legend>1. Photo</legend>
+    <div class="field" style="margin-top:0">
+      <label>Photo (JPEG/PNG)<input id="photo" type="file" accept="image/*"></label>
+    </div>
+    <div class="grid" style="margin-top:8px">
+      <label>Paper<select id="paper">
+        <option value="a4">A4</option><option value="letter">US Letter</option>
+        <option value="a3">A3</option><option value="legal">US Legal</option><option value="other">Other</option>
+      </select></label>
+      <label>Square side (mm)<select id="square_mm">
+        <option>10</option><option>15</option><option selected>20</option><option>25</option><option>30</option>
+      </select></label>
+    </div>
+    <button id="trace" type="button">Trace outlines</button>
+    <ul id="traceNotes" class="notes"></ul>
+  </fieldset>
+
+  <fieldset>
+    <legend>2. Edit</legend>
+    <div class="radios" role="radiogroup" aria-label="Editing tool">
+      <label><input type="radio" name="mode" value="move" checked> Move points</label>
+      <label><input type="radio" name="mode" value="notch"> Add notch</label>
+      <label><input type="radio" name="mode" value="scale"> Set scale</label>
+    </div>
+    <div class="grid" style="margin-top:8px">
+      <label>Notch diameter (mm)<input id="notch_d" type="number" value="20" min="5" max="60" step="1"></label>
+      <label>Scale<input id="scaleInfo" type="text" readonly value="unknown"></label>
+    </div>
+    <p class="hint">Drag the white points to fix an outline. Double-click an edge to add a point, right-click a
+      point or notch to remove it. "Set scale": click two points a known distance apart.</p>
+    <div id="toolList"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>3. Tray</legend>
+    <div class="grid">
+      <label>Tray<select id="tray"><option value="fit">Fitted box</option><option value="gridfinity">Gridfinity</option></select></label>
+      <label>Clearance<select id="clearance_mm">
+        <option value="0.5">Snug (0.5 mm)</option><option value="1" selected>Normal (1 mm)</option><option value="2">Loose (2 mm)</option>
+      </select></label>
+      <label>Pocket depth (mm)<input id="depth_mm" type="number" value="15" min="2" max="150" step="1"></label>
+      <label>Floor (mm)<input id="floor_mm" type="number" value="2" min="0.6" max="20" step="0.2"></label>
+      <label>Wall (mm)<input id="wall_mm" type="number" value="4" min="1" max="50" step="0.5"></label>
+      <label>Top chamfer (mm)<input id="chamfer_mm" type="number" value="1" min="0" max="5" step="0.5"></label>
+      <label id="cornerField">Corner radius (mm)<input id="corner_radius_mm" type="number" value="4" min="0" max="30" step="1"></label>
+      <label id="unitsField" class="hidden">Height units (7 mm)<input id="height_units" type="number" placeholder="auto" min="2" max="30" step="1"></label>
+    </div>
+    <button id="build" type="button" disabled>Build insert</button>
+  </fieldset>
+
+  <div id="status" role="status"></div>
+  <ul id="buildNotes" class="notes"></ul>
+  <p id="download" class="hint hidden"><a id="stlLink" href="#" style="color:var(--accent)">Download tool_insert.stl</a> <span id="sizeInfo"></span></p>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "/vendor/three/build/three.module.min.js", "three/addons/": "/vendor/three/examples/jsm/" } }
+</script>
+<script type="module">
+import { createViewer, errorText, loadStl, postJson } from "/viewer-kit.js";
+
+const $ = (id) => document.getElementById(id);
+const COLORS = ["#3d6bff", "#f0902a", "#2fae5c", "#b04ad8", "#e5484d", "#1fb6c9", "#d9b21b", "#7a8a99"];
+const canvas = $("editor");
+const ctx = canvas.getContext("2d");
+const viewer = createViewer($("viewport"));
+let tray = null;
+
+// Editor state. Points are in photo pixels (y down); mm conversion happens on build.
+const state = { img: null, w: 0, h: 0, mmPerPx: null, tools: [], scalePts: [], drag: null };
+// Photo -> canvas transform, recomputed on every draw.
+let view = { s: 1, ox: 0, oy: 0 };
+
+// Update the status line (kind: "" | "ok" | "error").
+function setStatus(text, kind) { $("status").textContent = text; $("status").className = kind || ""; }
+function mode() { return document.querySelector('input[name="mode"]:checked').value; }
+function fillNotes(el, notes) {
+  el.innerHTML = "";
+  for (const n of notes) { const li = document.createElement("li"); li.textContent = n; el.appendChild(li); }
+}
+
+/** Fit the photo into the canvas and redraw outlines, notches, the scale line and handles. */
+function draw() {
+  const dpr = window.devicePixelRatio || 1;
+  const cw = canvas.clientWidth, ch = canvas.clientHeight;
+  canvas.width = cw * dpr; canvas.height = ch * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cw, ch);
+  if (!state.img) return;
+  const s = Math.min(cw / state.w, ch / state.h) * 0.96;
+  view = { s, ox: (cw - state.w * s) / 2, oy: (ch - state.h * s) / 2 };
+  ctx.drawImage(state.img, view.ox, view.oy, state.w * s, state.h * s);
+  const P = ([x, y]) => [view.ox + x * s, view.oy + y * s];
+  state.tools.forEach((t, i) => {
+    const color = COLORS[i % COLORS.length];
+    ctx.globalAlpha = t.on ? 1 : 0.3;
+    ctx.beginPath();
+    t.pts.forEach((p, k) => { const [x, y] = P(p); k ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.closePath();
+    ctx.fillStyle = color + "33"; ctx.fill();
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
+    for (const n of t.notches) {
+      const [x, y] = P([n.x, n.y]);
+      ctx.beginPath(); ctx.arc(x, y, (n.dPx / 2) * s, 0, Math.PI * 2);
+      ctx.fillStyle = color + "55"; ctx.fill(); ctx.stroke();
+    }
+    if (t.on && mode() === "move") {
+      for (const p of t.pts) {
+        const [x, y] = P(p);
+        ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = "#fff"; ctx.fill(); ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.stroke();
+      }
+    }
+  });
+  ctx.globalAlpha = 1;
+  if (state.scalePts.length) {
+    ctx.strokeStyle = "#e5484d"; ctx.lineWidth = 2; ctx.beginPath();
+    state.scalePts.forEach((p, k) => { const [x, y] = P(p); k ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.stroke();
+    for (const p of state.scalePts) { const [x, y] = P(p); ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fillStyle = "#e5484d"; ctx.fill(); }
+  }
+}
+new ResizeObserver(draw).observe(canvas);
+for (const r of document.querySelectorAll('input[name="mode"]')) r.addEventListener("change", () => { state.scalePts = []; draw(); });
+
+function updateScale() {
+  $("scaleInfo").value = state.mmPerPx ? `${(1 / state.mmPerPx).toFixed(2)} px/mm` : "unknown - set it";
+  $("build").disabled = !state.mmPerPx || !state.tools.some((t) => t.on);
+}
+
+function renderToolList() {
+  $("toolList").innerHTML = "";
+  state.tools.forEach((t, i) => {
+    const label = document.createElement("label");
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = t.on;
+    cb.addEventListener("change", () => { t.on = cb.checked; draw(); updateScale(); });
+    const sw = document.createElement("span");
+    sw.className = "swatch"; sw.style.background = COLORS[i % COLORS.length];
+    label.append(cb, sw, ` Tool ${i + 1} (${t.pts.length} points${t.notches.length ? `, ${t.notches.length} notch` : ""})`);
+    $("toolList").appendChild(label);
+  });
+}
+
+// --- Trace ---
+$("trace").addEventListener("click", async () => {
+  const f = $("photo").files[0];
+  if (!f) { setStatus("Pick a photo first.", "error"); return; }
+  $("trace").disabled = true;
+  setStatus("Tracing...");
+  try {
+    const form = new FormData();
+    form.append("file", f);
+    form.append("square_mm", $("square_mm").value);
+    form.append("paper", $("paper").value);
+    const resp = await fetch("/tool-insert/trace", { method: "POST", body: form });
+    if (!resp.ok) throw new Error(await errorText(resp));
+    const res = await resp.json();
+    const img = new Image();
+    await new Promise((ok, bad) => { img.onload = ok; img.onerror = () => bad(new Error("could not show the preview")); img.src = res.preview; });
+    Object.assign(state, { img, w: res.width_px, h: res.height_px, mmPerPx: res.mm_per_px, scalePts: [] });
+    state.tools = res.tools.map((t, i) => ({ pts: t.outline_px, notches: [], on: i === 0 || res.tools.length < 4 }));
+    $("empty").classList.add("hidden");
+    fillNotes($("traceNotes"), res.notes);
+    renderToolList(); updateScale(); draw();
+    setStatus(`Found ${res.tools.length} shape(s). Check the outlines, then build.`, "ok");
+  } catch (err) {
+    console.error(err);
+    setStatus(err.message, "error");
+  } finally {
+    $("trace").disabled = false;
+  }
+});
+
+// --- Editing ---
+function toPhoto(ev) {
+  const r = canvas.getBoundingClientRect();
+  return [(ev.clientX - r.left - view.ox) / view.s, (ev.clientY - r.top - view.oy) / view.s];
+}
+// Nearest outline point (or notch) within `tol` canvas pixels.
+function hit(p, tol = 8) {
+  const lim = tol / view.s;
+  let best = null;
+  state.tools.forEach((t, ti) => {
+    if (!t.on) return;
+    t.pts.forEach((q, pi) => { const d = Math.hypot(q[0] - p[0], q[1] - p[1]); if (d < lim && (!best || d < best.d)) best = { d, ti, pi }; });
+    t.notches.forEach((n, ni) => { const d = Math.hypot(n.x - p[0], n.y - p[1]); if (d < n.dPx / 2 && !best) best = { d, ti, ni }; });
+  });
+  return best;
+}
+// Index of the outline (and the edge in it) closest to a point.
+function nearestEdge(p) {
+  let best = null;
+  state.tools.forEach((t, ti) => {
+    if (!t.on) return;
+    t.pts.forEach((a, i) => {
+      const b = t.pts[(i + 1) % t.pts.length];
+      const vx = b[0] - a[0], vy = b[1] - a[1];
+      const u = Math.max(0, Math.min(1, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / (vx * vx + vy * vy || 1)));
+      const d = Math.hypot(a[0] + u * vx - p[0], a[1] + u * vy - p[1]);
+      if (!best || d < best.d) best = { d, ti, i };
+    });
+  });
+  return best;
+}
+function insideTool(p) {
+  for (let ti = state.tools.length - 1; ti >= 0; ti--) {
+    const t = state.tools[ti];
+    if (!t.on) continue;
+    let inside = false;
+    for (let i = 0, j = t.pts.length - 1; i < t.pts.length; j = i++) {
+      const [xi, yi] = t.pts[i], [xj, yj] = t.pts[j];
+      if ((yi > p[1]) !== (yj > p[1]) && p[0] < ((xj - xi) * (p[1] - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    if (inside) return ti;
+  }
+  return null;
+}
+
+canvas.addEventListener("pointerdown", (ev) => {
+  if (!state.img || ev.button !== 0) return;
+  const p = toPhoto(ev);
+  const m = mode();
+  if (m === "move") {
+    const h = hit(p);
+    if (h && h.pi !== undefined) { state.drag = h; canvas.setPointerCapture(ev.pointerId); }
+  } else if (m === "notch") {
+    if (!state.mmPerPx) { setStatus("Set the scale first, so the notch has a size.", "error"); return; }
+    let ti = insideTool(p);
+    if (ti === null) { const e = nearestEdge(p); ti = e ? e.ti : null; }
+    if (ti === null) return;
+    state.tools[ti].notches.push({ x: p[0], y: p[1], dPx: parseFloat($("notch_d").value) / state.mmPerPx });
+    renderToolList(); draw();
+  } else if (m === "scale") {
+    state.scalePts = state.scalePts.length >= 2 ? [p] : [...state.scalePts, p];
+    draw();
+    if (state.scalePts.length === 2) {
+      const [a, b] = state.scalePts;
+      const px = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      const mm = parseFloat(prompt("Distance between the two points, in mm:", "100"));
+      if (mm > 0 && px > 0) { state.mmPerPx = mm / px; updateScale(); setStatus(`Scale set: ${(px / mm).toFixed(2)} px/mm.`, "ok"); }
+    }
+  }
+});
+canvas.addEventListener("pointermove", (ev) => {
+  if (!state.drag) return;
+  state.tools[state.drag.ti].pts[state.drag.pi] = toPhoto(ev);
+  draw();
+});
+canvas.addEventListener("pointerup", () => { state.drag = null; });
+canvas.addEventListener("dblclick", (ev) => {
+  if (mode() !== "move" || !state.img) return;
+  const p = toPhoto(ev);
+  const e = nearestEdge(p);
+  if (!e || e.d * view.s > 12) return;
+  state.tools[e.ti].pts.splice(e.i + 1, 0, p);
+  renderToolList(); draw();
+});
+canvas.addEventListener("contextmenu", (ev) => {
+  ev.preventDefault();
+  const h = hit(toPhoto(ev));
+  if (!h) return;
+  const t = state.tools[h.ti];
+  if (h.ni !== undefined) t.notches.splice(h.ni, 1);
+  else if (t.pts.length > 3) t.pts.splice(h.pi, 1);
+  renderToolList(); draw();
+});
+
+$("tray").addEventListener("change", () => {
+  const g = $("tray").value === "gridfinity";
+  $("unitsField").classList.toggle("hidden", !g);
+  $("cornerField").classList.toggle("hidden", g);
+});
+
+// --- Build ---
+$("build").addEventListener("click", async () => {
+  $("build").disabled = true;
+  setStatus("Building...");
+  try {
+    const k = state.mmPerPx, H = state.h;
+    const mm = ([x, y]) => [+(x * k).toFixed(2), +((H - y) * k).toFixed(2)];
+    const body = {
+      tray: $("tray").value,
+      tools: state.tools.filter((t) => t.on).map((t) => ({
+        outline_mm: t.pts.map(mm),
+        notches: t.notches.map((n) => { const [x, y] = mm([n.x, n.y]); return { x, y, d: +(n.dPx * k).toFixed(1) }; }),
+      })),
+    };
+    for (const f of ["clearance_mm", "depth_mm", "floor_mm", "wall_mm", "chamfer_mm", "corner_radius_mm"]) body[f] = parseFloat($(f).value);
+    const units = parseInt($("height_units").value, 10);
+    if (body.tray === "gridfinity" && units) body.height_units = units;
+    const res = await postJson("/tool-insert", body);
+    if (tray) viewer.scene.remove(tray);
+    tray = await loadStl(res.parts[0].url, 0x4a78c8);
+    viewer.scene.add(tray);
+    viewer.frame([tray]);
+    $("stlLink").href = res.parts[0].url;
+    $("stlLink").download = res.parts[0].filename;
+    $("sizeInfo").textContent = `${res.size_mm.map((v) => v.toFixed(1)).join(" x ")} mm` +
+      (res.grid_units ? ` (${res.grid_units[0]} x ${res.grid_units[1]} grid, ${res.grid_units[2]} units tall)` : "");
+    $("download").classList.remove("hidden");
+    fillNotes($("buildNotes"), res.notes);
+    setStatus(`Tray built: ${body.tools.length} pocket(s), floor ${res.floor_mm} mm.`, "ok");
+  } catch (err) {
+    console.error(err);
+    setStatus(err.message, "error");
+  } finally {
+    updateScale();
+  }
+});
+
+window.__toolInsertDebug = { state, get tray() { return tray; } };
+</script>
+</body>
+</html>

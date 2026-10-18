@@ -5,7 +5,7 @@ Description: FastAPI application wiring together the classifier, the two
     generation backends (OpenSCAD for simple parts, Blender for complex
     ones), the wall-thickness endpoints, the mold-generation endpoints,
     the spiral wand endpoints (twisted wand + figurine riders), the
-    split-to-fit endpoint, and the
+    split-to-fit endpoint, the tool-insert-from-a-photo endpoints, and the
     watertight analysis/repair endpoints. This is the only
     HTTP-facing module - it does no CAD/LLM work itself, only routing,
     validation, and translating domain errors into HTTP responses. Also
@@ -54,6 +54,9 @@ Troubleshooting:
       as a mesh (or angle_deg isn't between 0 and 90).
     - 422 from /models/{id}/split carries split.py's message (no grid
       within max_pieces fits the bed, or an unusable mesh).
+    - 422 from /tool-insert/trace or /tool-insert carries tool_insert.py's
+      message (unreadable photo, no tools found, a bad outline); 413 means
+      the photo is over MAX_IMAGE_UPLOAD_BYTES (25 MB).
     - 422 from /spiral-wand or /models/{id}/spiral-wand/rider carries
       spiral_wand.py's own message (impossible dimensions, or a mesh
       that isn't a closed solid - repair it in /watertight.html first).
@@ -88,6 +91,7 @@ from threedprompt import (
     tag_suggester,
     thickness,
     thumbnail,
+    tool_insert,
     transcription,
     watertight,
 )
@@ -129,6 +133,9 @@ from threedprompt.models import (
     TagSuggestResponse,
     ThickenRequest,
     ThickenResponse,
+    ToolInsertRequest,
+    ToolInsertResponse,
+    TraceResult,
     TranscribeResponse,
     UploadResponse,
 )
@@ -137,6 +144,7 @@ from threedprompt.openscad_generator import OpenScadGenerationError
 from threedprompt.spiral_wand import SpiralWandError
 from threedprompt.split import SplitError
 from threedprompt.thickness import ThicknessError
+from threedprompt.tool_insert import ToolInsertError
 from threedprompt.watertight import WatertightError
 
 configure_logging()
@@ -961,7 +969,7 @@ def _any_model_file(model_id: str) -> Path:
 
 _MODEL_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 # Part files the in-process tools write; GET /models/{id}/parts/{filename} serves only these.
-_PART_RE = re.compile(r"^(wand_body|wand_section\d{1,2}|wand_cap|rider|part_\d{2}|dowel_pin)\.stl$")
+_PART_RE = re.compile(r"^(wand_body|wand_section\d{1,2}|wand_cap|rider|part_\d{2}|dowel_pin|tool_insert)\.stl$")
 _SPIRAL_ZIP_NAME = "spiral_wand.zip"
 
 
@@ -1055,7 +1063,7 @@ def download_spiral_wand_zip(model_id: str) -> FileResponse:
 
 @app.get("/models/{model_id}/parts/{filename}")
 def download_part(model_id: str, filename: str) -> FileResponse:
-    """Download one STL part of a spiral wand, rider or split build (used by the browser viewers)."""
+    """Download one STL part of a spiral wand, rider, split or tool insert build (used by the browser viewers)."""
     if not _PART_RE.match(filename):
         raise HTTPException(status_code=404, detail=f"no part named {filename!r}")
     path = _checked_model_dir(model_id) / filename
@@ -1101,6 +1109,52 @@ def download_split_zip(model_id: str) -> FileResponse:
     if not path.is_file():
         raise HTTPException(status_code=404, detail="no split for this model_id")
     return FileResponse(path, media_type="application/zip", filename=f"{model_id}_split.zip")
+
+
+# --- Tool insert from a photo (tool_insert.py) ---
+
+_MAX_IMAGE_UPLOAD_BYTES = 25 * 1024 * 1024
+_SQUARE_MM_FORM = Form(20.0, gt=0, le=200)
+_MM_PER_PX_FORM = Form(None, gt=0, le=10)
+_PAPER_FORM = Form("a4", pattern="^(a4|letter|a3|legal|other)$")
+
+
+@app.post("/tool-insert/trace", response_model=TraceResult)
+async def trace_tools(
+    file: UploadFile = _UPLOAD_FILE,
+    square_mm: float = _SQUARE_MM_FORM,
+    mm_per_px: float | None = _MM_PER_PX_FORM,
+    paper: str = _PAPER_FORM,
+) -> TraceResult:
+    """
+    Trace tool outlines from a photo of tools on white paper with a dark
+    calibration square (square_mm wide); paper is the sheet size (a4,
+    letter, a3, legal or other). The outlines come back for the
+    user to edit; nothing is stored.
+    """
+    content = await file.read()
+    if len(content) > _MAX_IMAGE_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"photo exceeds {_MAX_IMAGE_UPLOAD_BYTES // (1024 * 1024)} MB")
+    try:
+        return tool_insert.trace(content, square_mm, mm_per_px, paper)
+    except ToolInsertError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/tool-insert", response_model=ToolInsertResponse)
+def build_tool_insert(request: ToolInsertRequest) -> ToolInsertResponse:
+    """Build a tray with a pocket for each (edited) tool outline; Gridfinity or a plain fitted tray."""
+    params = request.model_dump()
+    tools = params.pop("tools")
+    new_model_id, new_dir = storage.new_model_dir()
+    try:
+        result = tool_insert.make_insert(new_dir, tools, **params)
+    except ToolInsertError as exc:
+        shutil.rmtree(new_dir, ignore_errors=True)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    storage.save_spec(new_model_id, {"method": "tool_insert", "params": request.model_dump()})
+    parts = [part.model_copy(update={"url": f"/models/{new_model_id}/parts/{part.filename}"}) for part in result.parts]
+    return ToolInsertResponse(**result.model_dump(exclude={"parts"}), parts=parts, model_id=new_model_id)
 
 
 @app.get("/models/{model_id}/overhangs", response_model=OverhangResponse)

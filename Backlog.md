@@ -17,7 +17,7 @@ trimesh, real-geometry tests). In order:
    `POST /models/{id}/split`; the Workshop Manager's fit check offers it.
 2. **DONE 2026-10-18 — Overhang highlighting** (S): toggle in the three.js viewers, optional
    `overhang_area_mm2` in `/analyze`.
-3. **Tool insert from a photo** (L): paper + calibration square → scaled
+3. **DONE 2026-10-18 — Tool insert from a photo** (L): paper + calibration square → scaled
    outline (OpenCV, Apache-2.0) → editable outline → pocket tray, Gridfinity
    or custom.
 4. **Rule-based templates** (M each): Gridfinity bin, involute gears (own
