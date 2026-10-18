@@ -48,13 +48,13 @@ import manifold3d as mf
 import numpy as np
 import trimesh
 
+from threedprompt import geometry
 from threedprompt.logging_config import get_logger
 from threedprompt.models import SpiralWandPart, SpiralWandResult
 
 logger = get_logger(__name__)
 
-# Mesh formats trimesh can read without extra optional dependencies.
-SUPPORTED_EXTENSIONS = {".stl", ".obj", ".ply", ".glb", ".gltf", ".off"}
+SUPPORTED_EXTENSIONS = geometry.SUPPORTED_EXTENSIONS
 
 # Below this helix angle a gravity-driven rider tends to stick (inference
 # from friction-angle reasoning, not a print-tested threshold).
@@ -75,87 +75,22 @@ class SpiralWandError(RuntimeError):
 
 
 # --------------------------------------------------------------------------
-# Mesh helpers
+# Mesh helpers (shared implementations live in geometry.py)
 # --------------------------------------------------------------------------
-def _to_trimesh(m: mf.Manifold) -> trimesh.Trimesh:
-    """Convert a manifold3d solid into a trimesh mesh (for STL export)."""
-    mesh = m.to_mesh()
-    return trimesh.Trimesh(
-        vertices=np.asarray(mesh.vert_properties)[:, :3], faces=np.asarray(mesh.tri_verts), process=False
-    )
-
-
-def _to_manifold(tm: trimesh.Trimesh) -> mf.Manifold:
-    """Convert a trimesh mesh into a manifold3d solid; check .status() for validity."""
-    mesh = mf.Mesh(
-        vert_properties=np.ascontiguousarray(tm.vertices, dtype=np.float32),
-        tri_verts=np.ascontiguousarray(tm.faces, dtype=np.uint32),
-    )
-    return mf.Manifold(mesh)
-
-
-def _bbox(m: mf.Manifold) -> tuple[np.ndarray, np.ndarray]:
-    """Return (min_xyz, max_xyz) of a solid as numpy arrays."""
-    box = m.bounding_box()
-    return np.array(box[:3]), np.array(box[3:])
-
-
-def _save(m: mf.Manifold, path: Path) -> list[float]:
-    """Write a solid to STL and return its [x, y, z] size in mm."""
-    _to_trimesh(m).export(path)
-    lo, hi = _bbox(m)
-    return [round(float(v), 2) for v in hi - lo]
-
-
-def _cylinder(r: float, h: float, z0: float = 0.0, segs: int = 96) -> mf.Manifold:
-    """Z-axis cylinder of radius r and height h, base at z0."""
-    return mf.Manifold.cylinder(h, r, r, segs).translate((0, 0, z0))
+_to_trimesh = geometry.to_trimesh
+_to_manifold = geometry.to_manifold
+_bbox = geometry.bbox
+_save = geometry.save
+_cylinder = geometry.cylinder
+_d_peg = geometry.d_peg
 
 
 def load_solid(path: Path) -> mf.Manifold:
-    """
-    Load a mesh file and return it as one valid solid.
-
-    Merges duplicate vertices, drops degenerate faces, fills small holes
-    and fixes normals, then unions overlapping shells (common in
-    downloaded figurines: head, arms and body as separate closed meshes)
-    so later booleans see one clean volume.
-
-    Args:
-        path: mesh file with a suffix in SUPPORTED_EXTENSIONS.
-    Returns:
-        The mesh as a manifold3d solid.
-    Raises:
-        SpiralWandError: unreadable file or not a closed solid after repair.
-    """
-    if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
-        raise SpiralWandError(f"unsupported mesh format {path.suffix!r}; supported: {sorted(SUPPORTED_EXTENSIONS)}")
+    """Load a mesh file as one valid solid (geometry.load_solid), raising SpiralWandError on failure."""
     try:
-        tm = trimesh.load(path, force="mesh")
-    except Exception as exc:  # trimesh raises many exception types for bad files
-        logger.error("could not read mesh %s: %s", path, exc)
-        raise SpiralWandError(f"could not read a mesh from {path.name}") from exc
-    if not isinstance(tm, trimesh.Trimesh) or len(tm.faces) == 0:
-        raise SpiralWandError(f"could not read a mesh from {path.name}")
-
-    tm.merge_vertices()
-    tm.update_faces(tm.nondegenerate_faces())
-    tm.update_faces(tm.unique_faces())
-    if not tm.is_watertight:
-        trimesh.repair.fill_holes(tm)
-    with np.errstate(all="ignore"):  # degenerate shells warn while computing volume; harmless
-        trimesh.repair.fix_normals(tm)
-
-    solid = _to_manifold(tm)
-    if solid.status() != mf.Error.NoError or solid.is_empty():
-        raise SpiralWandError(
-            f"{path.name} is not a closed solid even after repair ({solid.status().name}). "
-            "Run it through the watertight checker (/watertight.html) and use the repaired model."
-        )
-    shells = solid.decompose()
-    if len(shells) > 1:
-        solid = mf.Manifold.batch_boolean(shells, mf.OpType.Add)
-    return solid
+        return geometry.load_solid(path)
+    except geometry.GeometryError as exc:
+        raise SpiralWandError(str(exc)) from exc
 
 
 # --------------------------------------------------------------------------
@@ -207,12 +142,6 @@ def _bore_radius(rod: dict) -> float:
 def _peg_radius(rod: dict) -> float:
     """Radius of the D-pegs joining sections and the cap."""
     return max(2.0, _inner_radius(rod) * 0.6)
-
-
-def _d_peg(r: float, h: float, z0: float) -> mf.Manifold:
-    """Cylinder with one flat side, so a joint only goes together one way."""
-    flat = mf.Manifold.cube((2 * r, 2 * r, h + 2)).translate((r * 0.55, -r, z0 - 1))
-    return _cylinder(r, h, z0, 64) - flat
 
 
 def _chamfer_top(r: float, z_top: float, c: float) -> mf.Manifold:

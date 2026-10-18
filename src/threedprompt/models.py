@@ -672,3 +672,55 @@ class SpiralWandResponse(SpiralWandResult):
 
     model_id: str
     download_url: str
+
+
+# --- Split to fit the bed (split.py) ---
+# See docs/print-tools-plan.md item 1.
+
+
+class SplitRequest(BaseModel):
+    """POST /models/{model_id}/split request body."""
+
+    bed_x_mm: float = Field(250.0, ge=20, le=2000, description="Printable width of the bed.")
+    bed_y_mm: float = Field(250.0, ge=20, le=2000, description="Printable depth of the bed.")
+    bed_z_mm: float = Field(250.0, ge=20, le=2000, description="Printable height.")
+    connector: Literal["dowel", "dpeg", "none"] = Field(
+        "dowel",
+        description="dowel: matching holes in both pieces plus printed pins; dpeg: a one-way D-shaped peg on one "
+        "piece and a socket in the other; none: plain cuts.",
+    )
+    connector_diameter_mm: float = Field(5.0, ge=2, le=30)
+    connector_length_mm: float = Field(12.0, ge=4, le=60, description="Total pin length (half in each piece).")
+    clearance_mm: float = Field(0.15, ge=0, le=1.0, description="Radial gap per side in connector holes.")
+    max_pieces: int = Field(16, ge=2, le=64)
+    margin_mm: float = Field(1.0, ge=0, le=20, description="Space kept free on each side of the bed.")
+
+
+class SplitPart(BaseModel):
+    """One STL produced by split.py."""
+
+    filename: str
+    role: Literal["piece", "pin"]
+    size_mm: list[float]
+    fits: bool
+    print_hint: str | None = None
+    cell: list[int] | None = Field(None, description="Grid cell [i, j, k] of a piece (for the exploded view).")
+    count: int = Field(1, description="How many to print (dowel pins).")
+    url: str | None = None
+
+
+class SplitResult(BaseModel):
+    """Output of split.split_to_fit(); also the core of SplitResponse."""
+
+    parts: list[SplitPart]
+    notes: list[str] = Field(default_factory=list)
+    grid: list[int]
+    connector_count: int
+    model_size_mm: list[float]
+
+
+class SplitResponse(SplitResult):
+    """POST /models/{model_id}/split response body."""
+
+    model_id: str
+    download_url: str

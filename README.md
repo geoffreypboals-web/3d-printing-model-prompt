@@ -411,6 +411,29 @@ Meshes that aren't closed solids are lightly repaired (merged vertices,
 small holes filled, overlapping shells unioned); anything worse is
 rejected with a 422 that points you to the watertight checker.
 
+## Split to fit the bed
+
+Open `http://localhost:8000/split.html`, pick a model (upload or
+`model_id`) and a printer preset or bed size, and press **Split**. A model
+too big for the bed is cut on the smallest grid of equal cells that each
+fit (in any upright or lying-down orientation), and every cut face gets
+connectors so the pieces line up:
+
+- **Dowel pins** (default): matching holes in both pieces, plus
+  `dowel_pin.stl` to print (the response says how many).
+- **One-way D-peg**: a D-shaped peg on one piece and a socket in the other,
+  so the joint only goes together one way. No loose pins.
+- **None**: plain cuts to glue flat.
+
+Connectors sit inside each cut's cross-section with a wall around them;
+a face too thin or small for one is listed in the notes (glue it flat).
+Pieces keep the model's coordinates, so they reassemble with no transform;
+the page shows them assembled or pulled apart, with each piece's size and
+how to lay it on the bed. API: `POST /models/{model_id}/split` (see
+`/docs`), then `GET /models/{model_id}/parts/{filename}` or
+`GET /models/{model_id}/split.zip`. Built in-process with manifold3d like
+the spiral wand; plan: `docs/print-tools-plan.md` item 1.
+
 ## STEP conversion & solid healing
 
 Two FreeCAD-backed capabilities Blender can't provide at all:
@@ -510,7 +533,9 @@ Generator interview, so answers can be spoken instead of typed.
 | POST   | `/models/{model_id}/repair-solid` | Heals B-rep topology via FreeCAD ShapeFix -> JSON, overwrites in place |
 | POST   | `/spiral-wand`                | Wand + rod settings (all optional) -> JSON w/ model_id, parts (URLs, assembly offsets), notes |
 | POST   | `/models/{model_id}/spiral-wand/rider` | Rod + rider settings -> JSON w/ new model_id and the rider part |
-| GET    | `/models/{model_id}/parts/{filename}` | Download one spiral wand / rider STL part                     |
+| GET    | `/models/{model_id}/parts/{filename}` | Download one spiral wand, rider or split STL part             |
+| POST   | `/models/{model_id}/split`    | Bed size + connector settings -> JSON w/ new model_id, pieces (fit + print hint), zip URL |
+| GET    | `/models/{model_id}/split.zip` | Download every piece of a split (and the dowel pin) as one zip         |
 | GET    | `/models/{model_id}/spiral-wand.zip` | Download every part of a spiral wand / rider build as one zip  |
 | POST   | `/thumbnail`                  | multipart upload (`file`, `size`) -> **a PNG thumbnail**                |
 | POST   | `/tags/suggest`               | `{"file_name": "...", ...}` -> JSON w/ suggested tags + method          |
