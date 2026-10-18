@@ -499,6 +499,29 @@ API: `POST /templates/gridfinity-bin`, `/templates/gear`, `/templates/qr-tag`
 returns a `model_id`, part URLs, notes and a `report`. Plan:
 `docs/print-tools-plan.md` item 4.
 
+## Multi-colour 3MF
+
+Any build with several parts (a QR tag's plate and code, gears, split
+pieces, a wand and its rider) can be exported as **one 3MF with a filament
+per part**, for the Bambu AMS or the Elegoo CANVAS. On the templates page,
+pick a colour and a filament slot for each part under *Multi-colour 3MF*,
+choose the slicer and download. A QR tag defaults to a white plate (slot 1)
+and black code (slot 2).
+
+- **Bambu Studio / OrcaSlicer / Elegoo Slicer / Anycubic Slicer Next:**
+  slicer "orca". Open the file (don't import it into an existing project)
+  and each part keeps its slot.
+- **PrusaSlicer:** slicer "prusa". It reads multi-part objects
+  differently, so the same file won't serve both (see
+  `docs/adr/0015-multicolour-3mf-two-layouts.md`).
+- Untick *Keep parts together* to get each part as its own object.
+
+API: `POST /models/{model_id}/export-3mf` with
+`{"parts": [{"filename", "color", "extruder"}], "assembled", "slicer"}`
+(omit `parts` for every part, one slot each), then
+`GET /models/{model_id}/multicolour.3mf`. Plan:
+`docs/print-tools-plan.md` item 5.
+
 ## STEP conversion & solid healing
 
 Two FreeCAD-backed capabilities Blender can't provide at all:
@@ -608,6 +631,8 @@ Generator interview, so answers can be spoken instead of typed.
 | POST   | `/templates/gear`             | Module, teeth, pressure angle, backlash, bore (+ mate, rack) -> parts + mesh report |
 | POST   | `/templates/lithophane`       | Image (multipart) + shape/thickness/frame -> `lithophane.stl` |
 | POST   | `/templates/qr-tag`           | Text/URL or Wi-Fi -> raised QR tag + separate plate/code STLs |
+| POST   | `/models/{model_id}/export-3mf` | Parts + colour + filament slot, slicer orca/prusa -> JSON w/ download URL |
+| GET    | `/models/{model_id}/multicolour.3mf` | Download the last multi-colour 3MF exported for the model |
 | GET    | `/models/{model_id}/spiral-wand.zip` | Download every part of a spiral wand / rider build as one zip  |
 | POST   | `/thumbnail`                  | multipart upload (`file`, `size`) -> **a PNG thumbnail**                |
 | POST   | `/tags/suggest`               | `{"file_name": "...", ...}` -> JSON w/ suggested tags + method          |
@@ -866,6 +891,7 @@ This project is intended to be open source (CLAUDE.md rule 7), MIT licensed
 | `manifold3d` | Apache-2.0 | in-process mesh booleans and twisted extrusions for the spiral wand feature |
 | `networkx` | BSD-3-Clause | used by trimesh's hole filling |
 | `opencv-python-headless` | Apache-2.0 | photo tracing for the tool insert; its wheels bundle FFmpeg shared libraries (LGPL) - dynamically linked, keep FFmpeg's notice if redistributing the image |
+| `lib3mf` (dev only) | BSD-2-Clause | tests check the exported 3MF files with the 3MF consortium's reference library; not used at runtime |
 | `segno` | BSD-3-Clause | QR code encoding for the QR tag template |
 | Gridfinity (sizes only, no files) | MIT | the 42 mm grid, 7 mm height unit and foot profile in `gridfinity.py` follow Zack Freedman's published spec |
 | import_3dm v0.0.18 reader (vendored, `src/threedprompt/blender_scripts/vendor/rhino3dm_reader/`) | MIT | `.3dm` import inside Blender; license + `NOTICE.md` kept alongside |

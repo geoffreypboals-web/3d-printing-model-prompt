@@ -6,7 +6,7 @@ Description: FastAPI application wiring together the classifier, the two
     ones), the wall-thickness endpoints, the mold-generation endpoints,
     the spiral wand endpoints (twisted wand + figurine riders), the
     split-to-fit endpoint, the tool-insert-from-a-photo endpoints, the
-    rule-based templates (/templates/...), and the
+    rule-based templates (/templates/...), multi-colour 3MF export, and the
     watertight analysis/repair endpoints. This is the only
     HTTP-facing module - it does no CAD/LLM work itself, only routing,
     validation, and translating domain errors into HTTP responses. Also
@@ -61,6 +61,9 @@ Troubleshooting:
     - 422 from /templates/... carries the template's own message (settings
       that can't make a printable part, content too long for a QR code,
       an unreadable lithophane image).
+    - 422 from /models/{id}/export-3mf: a part name that isn't one of the
+      model's STLs, or a model with no parts (export a template, split,
+      wand or insert build, or a model with model.stl).
     - 422 from /spiral-wand or /models/{id}/spiral-wand/rider carries
       spiral_wand.py's own message (impossible dimensions, or a mesh
       that isn't a closed solid - repair it in /watertight.html first).
@@ -98,6 +101,7 @@ from threedprompt import (
     storage,
     tag_suggester,
     thickness,
+    threemf,
     thumbnail,
     tool_insert,
     transcription,
@@ -119,6 +123,8 @@ from threedprompt.models import (
     DraftCheckRequest,
     DraftCheckResponse,
     DraftReport,
+    Export3mfRequest,
+    Export3mfResponse,
     FlippedNormalIsland,
     GearRequest,
     GenerateRequest,
@@ -1247,6 +1253,70 @@ async def template_lithophane(
     return await run_in_threadpool(
         _run_template, "lithophane", lambda d: lithophane.make_lithophane(content, d, **params), params
     )
+
+
+# --- Multi-colour 3MF export (threemf.py) ---
+
+_3MF_NAME = "multicolour.3mf"
+# Default filaments for parts that are meant to be two colours.
+_DEFAULT_COLOURS = {"qr_plate.stl": ("#F2F2F2", 1), "qr_code.stl": ("#1C1C1F", 2)}
+
+
+def _model_parts(model_id: str) -> list[str]:
+    """The model's STL parts (the names download_part serves), or model.stl for a plain model."""
+    directory = _checked_model_dir(model_id)
+    names = sorted(p.name for p in directory.glob("*.stl") if _PART_RE.match(p.name))
+    if {"qr_plate.stl", "qr_code.stl", "qr_tag.stl"} <= set(names):
+        names.remove("qr_tag.stl")  # the combined tag duplicates the plate + code
+    if not names and (directory / "model.stl").is_file():
+        names = ["model.stl"]
+    return names
+
+
+@app.post("/models/{model_id}/export-3mf", response_model=Export3mfResponse)
+def export_multicolour_3mf(model_id: str, request: Export3mfRequest) -> Export3mfResponse:
+    """
+    Export a model's parts as one 3MF with a filament (colour + AMS/CANVAS
+    slot) per part. `slicer` picks the layout: "orca" for Bambu Studio /
+    OrcaSlicer / Elegoo Slicer, "prusa" for PrusaSlicer. Without `parts`,
+    every part gets its own slot.
+    """
+    available = _model_parts(model_id)
+    if not available:
+        raise HTTPException(status_code=422, detail="this model has no STL parts to export")
+    if request.parts is None:
+        chosen = []
+        for i, name in enumerate(available):
+            color, slot = _DEFAULT_COLOURS.get(name, (threemf.PALETTE[i % len(threemf.PALETTE)], i % 16 + 1))
+            chosen.append({"filename": name, "color": color, "extruder": slot})
+    else:
+        chosen = [p.model_dump() for p in request.parts]
+        unknown = [p["filename"] for p in chosen if p["filename"] not in available]
+        if unknown:
+            raise HTTPException(status_code=422, detail=f"not parts of this model: {unknown}; parts: {available}")
+    directory = _checked_model_dir(model_id)
+    parts = []
+    for p in chosen:
+        try:
+            mesh = trimesh.load(directory / p["filename"], force="mesh")
+        except Exception as exc:  # trimesh raises many exception types for bad files
+            logger.error("3MF export could not read %s/%s: %s", model_id, p["filename"], exc)
+            raise HTTPException(status_code=422, detail=f"could not read {p['filename']}") from exc
+        parts.append({"name": Path(p["filename"]).stem, "mesh": mesh, "color": p["color"], "extruder": p["extruder"]})
+    try:
+        summary = threemf.write_3mf(directory / _3MF_NAME, parts, request.assembled, request.slicer)
+    except TemplateError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return Export3mfResponse(model_id=model_id, download_url=f"/models/{model_id}/{_3MF_NAME}", **summary)
+
+
+@app.get("/models/{model_id}/multicolour.3mf")
+def download_multicolour_3mf(model_id: str) -> FileResponse:
+    """Download the last multi-colour 3MF exported for this model."""
+    path = _checked_model_dir(model_id) / _3MF_NAME
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="no 3MF exported for this model yet; POST export-3mf first")
+    return FileResponse(path, media_type="model/3mf", filename=f"{model_id}_multicolour.3mf")
 
 
 @app.get("/models/{model_id}/overhangs", response_model=OverhangResponse)

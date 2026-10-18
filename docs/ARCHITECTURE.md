@@ -26,7 +26,7 @@ flowchart LR
 
 | Module | Role |
 |---|---|
-| `main.py` | All HTTP routes (`/health`, `/generate`, `/thicken`, `/mold`, `/models/{id}/...`, `/spiral-wand`, `/models/{id}/split`, `/tool-insert`, `/templates/...`, `/watertight/upload`, `/step/upload`, `/thumbnail`, `/tags/suggest`, `/transcribe`) and a `StaticFiles` mount of `static/` at `/` (`index.html`, `watertight.html`, `spiral-wand.html`, `split.html`, `tool-insert.html`, `templates.html`, vendored three.js). The static mount is registered last so API routes win. |
+| `main.py` | All HTTP routes (`/health`, `/generate`, `/thicken`, `/mold`, `/models/{id}/...`, `/spiral-wand`, `/models/{id}/split`, `/tool-insert`, `/templates/...`, `/models/{id}/export-3mf`, `/watertight/upload`, `/step/upload`, `/thumbnail`, `/tags/suggest`, `/transcribe`) and a `StaticFiles` mount of `static/` at `/` (`index.html`, `watertight.html`, `spiral-wand.html`, `split.html`, `tool-insert.html`, `templates.html`, vendored three.js). The static mount is registered last so API routes win. |
 | `config.py` | The only place environment variables are read (`Settings` dataclass, module-level `settings`). |
 | `classifier.py` | Keyword heuristic -> `simple` (OpenSCAD side) or `complex` (Blender side); if confidence < `CLASSIFIER_CONFIDENCE_THRESHOLD` the LLM classifies instead (ADR 0001). |
 | `openscad_generator.py` | Built-in templates (bracket, box, plate, spacer) with no LLM call; otherwise LLM-authored OpenSCAD, one retry feeding the compiler error back. |
@@ -38,6 +38,7 @@ flowchart LR
 | `geometry.py`, `split.py` | Shared manifold3d/trimesh helpers and the overhang measure (`GET /models/{id}/overhangs`; red overlay toggle in the tool pages via `viewer-kit.js`); split a model to fit the bed with dowel/D-peg connectors (`static/split.html`, shared viewer code in `static/viewer-kit.js`). |
 | `tool_insert.py`, `gridfinity.py` | Tool insert from a photo: OpenCV traces tool outlines from a photo of tools on paper with a calibration square (`POST /tool-insert/trace`), and edited outlines become a fitted or Gridfinity tray with a pocket per tool (`POST /tool-insert`, `static/tool-insert.html`). `gridfinity.py` holds the Gridfinity grid sizes and stepped foot. |
 | `gridfinity.py` (`make_bin`), `gear.py`, `lithophane.py`, `qr_tag.py` | Rule-based templates behind `POST /templates/...` and `static/templates.html`: Gridfinity bins, involute gears/racks with a mesh report, lithophanes, QR tags (segno). All return a `TemplateResult` (parts, notes, report); bad settings raise `geometry.TemplateError` (422). |
+| `threemf.py` | Multi-colour 3MF writer (plain XML): a colour + filament slot per part, in the Orca/Bambu layout (components + `model_settings.config`) or PrusaSlicer's (one mesh + triangle ranges in `Slic3r_PE_model.config`); ADR 0015. Behind `POST /models/{id}/export-3mf`. |
 | `spiral_wand.py` | Spiral wand + figurine riders, built in-process with manifold3d/trimesh (no CAD subprocess, no LLM); GUI and viewer in `static/spiral-wand.html` (ADR 0014). |
 | `thumbnail.py`, `tag_suggester.py`, `transcription.py` | Library helpers for 3dPrinterWorkshopManager: PNG thumbnails, text-only LLM tag suggestions (heuristic fallback), local speech-to-text. |
 | `storage.py` | Model folders, `spec.json`, prompt cache, zip helper. |

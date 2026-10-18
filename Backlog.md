@@ -22,7 +22,7 @@ trimesh, real-geometry tests). In order:
    or custom.
 4. **DONE 2026-10-18 — Rule-based templates** (M each): Gridfinity bin, involute gears (own
    code), lithophane (Pillow), QR tag (segno).
-5. **Multi-colour 3MF export** (M): one filament per part for the AMS and
+5. **DONE 2026-10-18 — Multi-colour 3MF export** (M): one filament per part for the AMS and
    CANVAS; slicer metadata research first.
 
 Not taken: a general sketch/constraint editor and sculpting.
