@@ -4,7 +4,9 @@ File: /home/user/3d-printing-model-prompt/src/threedprompt/static/viewer-kit.js
 Description: Shared helpers for the three.js tool pages (split.html, and
     the print-tool pages that follow - see docs/print-tools-plan.md):
     API calls with readable errors, binary STL loading, and a Z-up viewer
-    (scene, orbit camera, lights, bed grid, framing, resize, render loop).
+    (scene, orbit camera, lights, bed grid, framing, resize, render loop),
+    plus setOverhangs(): a red overlay on faces that need support, also
+    used by spiral-wand.html and watertight.html.
 Inputs: ES module imports from the page; the page's own DOM elements.
 Outputs: Exported functions/classes; no side effects at import time.
 Troubleshooting:
@@ -130,4 +132,81 @@ export function createViewer(container, before = null) {
   requestAnimationFrame(loop);
 
   return { THREE, scene, camera, renderer, controls, frame, onFrame };
+}
+
+/**
+ * Highlight overhangs: faces that point down more steeply than `angleDeg`
+ * from vertical need support. Adds (or removes) a red overlay child on
+ * every mesh under `roots`. Faces lying on the bed (the lowest point of
+ * all meshes along `up`) are ignored. World transforms are respected, so
+ * call it again after moving pieces.
+ *
+ * @param {THREE.Object3D[]} roots  meshes or groups to scan
+ * @param {{enabled: boolean, angleDeg?: number, up?: number[], bedTolerance?: number}} opts
+ * @returns {{area: number, faces: number}} overhang area (model units^2) and face count
+ */
+export function setOverhangs(roots, { enabled, angleDeg = 45, up = [0, 0, 1], bedTolerance = 0.3 }) {
+  const upV = new THREE.Vector3(...up).normalize();
+  const meshes = [];
+  for (const r of roots) {
+    if (!r) continue;
+    r.updateMatrixWorld(true);
+    r.traverse((o) => { if (o.isMesh && !o.userData.overhangOverlay) meshes.push(o); });
+  }
+  for (const m of meshes) {
+    for (const child of [...m.children]) {
+      if (child.userData.overhangOverlay) { m.remove(child); child.geometry.dispose(); }
+    }
+  }
+  if (!enabled) return { area: 0, faces: 0 };
+
+  // The bed is the lowest point of everything along `up`.
+  const v = new THREE.Vector3();
+  let bed = Infinity;
+  for (const m of meshes) {
+    const pos = m.geometry.attributes.position;
+    for (let i = 0; i < pos.count; i++) bed = Math.min(bed, v.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld).dot(upV));
+  }
+
+  const limit = Math.sin(THREE.MathUtils.degToRad(angleDeg)); // flag when -n.up > sin(angle)
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  const ab = new THREE.Vector3(), ac = new THREE.Vector3(), n = new THREE.Vector3();
+  let area = 0, faces = 0;
+  for (const m of meshes) {
+    const geom = m.geometry;
+    const pos = geom.attributes.position;
+    const index = geom.index;
+    const tri = index ? index.count / 3 : pos.count / 3;
+    const keep = [];
+    for (let t = 0; t < tri; t++) {
+      const i0 = index ? index.getX(3 * t) : 3 * t;
+      const i1 = index ? index.getX(3 * t + 1) : 3 * t + 1;
+      const i2 = index ? index.getX(3 * t + 2) : 3 * t + 2;
+      a.fromBufferAttribute(pos, i0).applyMatrix4(m.matrixWorld);
+      b.fromBufferAttribute(pos, i1).applyMatrix4(m.matrixWorld);
+      c.fromBufferAttribute(pos, i2).applyMatrix4(m.matrixWorld);
+      n.crossVectors(ab.subVectors(b, a), ac.subVectors(c, a));
+      const twiceArea = n.length();
+      if (twiceArea === 0) continue;
+      n.divideScalar(twiceArea);
+      if (-n.dot(upV) <= limit) continue;
+      const lowest = Math.min(a.dot(upV), b.dot(upV), c.dot(upV));
+      const highest = Math.max(a.dot(upV), b.dot(upV), c.dot(upV));
+      if (highest - bed <= bedTolerance && lowest - bed <= bedTolerance) continue; // sits on the bed
+      keep.push(i0, i1, i2);
+      area += twiceArea / 2;
+      faces += 1;
+    }
+    if (!keep.length) continue;
+    const overlay = new THREE.BufferGeometry();
+    overlay.setAttribute("position", pos);
+    overlay.setIndex(keep);
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xe5484d, transparent: true, opacity: 0.85, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1,
+    });
+    const mesh = new THREE.Mesh(overlay, mat);
+    mesh.userData.overhangOverlay = true;
+    m.add(mesh);
+  }
+  return { area, faces };
 }

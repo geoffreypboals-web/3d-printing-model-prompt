@@ -5,6 +5,7 @@ Description: GUI + three.js viewer for split-to-fit (split.py), linked from
     index.html. Pick a model (upload or model_id) and a printer, choose the
     connector, and see the pieces assembled or pulled apart; each piece is
     listed with its size, whether it fits and how to lay it on the bed.
+    The "overhangs" toggle paints faces that need support in red, per piece.
 Inputs: User interaction; calls POST /watertight/upload,
     POST /models/{id}/split, GET /models/{id}/parts/{file} on this origin.
 Outputs: None (a browser page) - files live under the returned model_id.
@@ -77,6 +78,9 @@ Troubleshooting:
     <span>Explode</span>
     <input id="explode" type="range" min="0" max="1" step="0.01" value="0.35" aria-label="Explode pieces">
     <label style="display:inline-flex;gap:4px;align-items:center"><input id="showBed" type="checkbox" checked> bed outline</label>
+    <label style="display:inline-flex;gap:4px;align-items:center" title="Faces steeper than this from vertical need support"><input id="showOver" type="checkbox"> overhangs &gt;
+      <input id="overAngle" type="number" value="45" min="10" max="80" step="5" style="width:52px;padding:2px 4px">&deg;</label>
+    <span id="overInfo"></span>
   </div>
 </div>
 <div id="sidebar">
@@ -151,7 +155,7 @@ Troubleshooting:
 { "imports": { "three": "/vendor/three/build/three.module.min.js", "three/addons/": "/vendor/three/examples/jsm/" } }
 </script>
 <script type="module">
-import { createViewer, loadStl, postJson, uploadMesh } from "/viewer-kit.js";
+import { createViewer, loadStl, postJson, setOverhangs, uploadMesh } from "/viewer-kit.js";
 
 const $ = (id) => document.getElementById(id);
 const viewer = createViewer($("viewport"), $("bar"));
@@ -189,7 +193,18 @@ function applyExplode() {
     p.mesh.position.set(off[0], off[1], off[2]);
   }
 }
-$("explode").addEventListener("input", applyExplode);
+$("explode").addEventListener("input", () => { applyExplode(); refreshOverhangs(); });
+
+// Redraw the red overhang overlay. Pieces print one at a time, so each piece
+// is checked on its own bed (its own lowest point), not the assembled model's.
+function refreshOverhangs() {
+  const enabled = $("showOver").checked;
+  let area = 0;
+  for (const p of pieces) area += setOverhangs([p.mesh], { enabled, angleDeg: parseFloat($("overAngle").value) || 45 }).area;
+  $("overInfo").textContent = enabled ? `${(area / 100).toFixed(0)} cm\u00b2 needs support` : "";
+}
+$("showOver").addEventListener("change", refreshOverhangs);
+$("overAngle").addEventListener("input", refreshOverhangs);
 $("showBed").addEventListener("change", () => { if (bedBox) bedBox.visible = $("showBed").checked; });
 
 // Draw the printer's build volume as a wireframe box next to the model, for scale.
@@ -236,6 +251,7 @@ $("go").addEventListener("click", async () => {
       pieces.push({ mesh, cell: part.cell });
     }
     applyExplode();
+    refreshOverhangs();
     drawBed([body.bed_x_mm, body.bed_y_mm, body.bed_z_mm]);
     viewer.frame([...pieces.map((p) => p.mesh), bedBox]);
 

@@ -724,3 +724,13 @@ class SplitResponse(SplitResult):
 
     model_id: str
     download_url: str
+
+
+class OverhangResponse(BaseModel):
+    """GET /models/{model_id}/overhangs response body (geometry.overhang_report)."""
+
+    overhang_area_mm2: float
+    total_area_mm2: float
+    overhang_fraction: float = Field(description="Share of the surface that needs support, 0..1.")
+    overhang_face_count: int
+    angle_deg: float

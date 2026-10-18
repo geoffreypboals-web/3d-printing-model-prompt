@@ -346,3 +346,16 @@ might disrupt the volume (host rebuild, `docker compose down -v`, etc.).
 - **"can't split ... into at most N pieces":** raise `max_pieces` or pick
   a bigger printer.
 
+## Overhang check: red faces where you didn't expect them
+
+- **The whole bottom is red:** the model's lowest point isn't flat on the
+  bed (it's tilted, or a small foot sticks down), so its underside isn't
+  treated as "on the bed". Lay it flat in the slicer; the check uses the
+  model as stored, Z up.
+- **watertight.html shows overhangs sideways:** that page's preview is the
+  analyzed GLB, which is Y-up; the toggle already uses +Y as up there. If
+  it looks wrong, the source file was exported Y-up; re-export it Z-up.
+- **The number differs from your slicer's support area:** slicers add
+  bridges, minimum island sizes and their own angle rules; this is the raw
+  face area past the angle.
+

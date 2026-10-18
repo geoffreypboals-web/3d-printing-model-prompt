@@ -1,6 +1,6 @@
 # Print tools plan (ideas from the 3DPrintCAD review)
 
-Date: 2026-10-17. Status: item 1 built 2026-10-18 (`split.py`); items 2-5 planned.
+Date: 2026-10-17. Status: items 1-2 built 2026-10-18 (`split.py`, overhang check); items 3-5 planned.
 
 ## Why
 

@@ -50,6 +50,8 @@ Troubleshooting:
       to tell "unreachable" apart from "reachable but replied
       unparseable"). See tag_suggester.py's header for the text-only vs.
       vision-based tagging tradeoff.
+    - 422 from /models/{id}/overhangs means the model file can't be read
+      as a mesh (or angle_deg isn't between 0 and 90).
     - 422 from /models/{id}/split carries split.py's message (no grid
       within max_pieces fits the bed, or an unusable mesh).
     - 422 from /spiral-wand or /models/{id}/spiral-wand/rider carries
@@ -66,6 +68,7 @@ import re
 import shutil
 from pathlib import Path
 
+import trimesh
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
@@ -76,6 +79,7 @@ from threedprompt import (
     cadquery_gen,
     draft_analysis,
     freecad_cad,
+    geometry,
     mold,
     openscad_generator,
     spiral_wand,
@@ -110,6 +114,7 @@ from threedprompt.models import (
     HoleClassification,
     MoldRequest,
     MoldResponse,
+    OverhangResponse,
     RepairRequest,
     RepairResponse,
     RepairSolidResponse,
@@ -1096,6 +1101,26 @@ def download_split_zip(model_id: str) -> FileResponse:
     if not path.is_file():
         raise HTTPException(status_code=404, detail="no split for this model_id")
     return FileResponse(path, media_type="application/zip", filename=f"{model_id}_split.zip")
+
+
+@app.get("/models/{model_id}/overhangs", response_model=OverhangResponse)
+def model_overhangs(model_id: str, angle_deg: float = 45.0) -> OverhangResponse:
+    """
+    Surface that would need support if the model is printed as oriented (Z up):
+    faces pointing down more steeply than angle_deg from vertical, ignoring
+    faces on the bed. The tool pages draw the same faces in red.
+    """
+    if not 0 < angle_deg < 90:
+        raise HTTPException(status_code=422, detail="angle_deg must be between 0 and 90")
+    source = _mesh_source(model_id)
+    try:
+        mesh = trimesh.load(source, force="mesh")
+    except Exception as exc:  # trimesh raises many exception types for bad files
+        logger.error("overhang check could not read %s: %s", source, exc)
+        raise HTTPException(status_code=422, detail=f"could not read a mesh from {source.name}") from exc
+    if not isinstance(mesh, trimesh.Trimesh) or len(mesh.faces) == 0:
+        raise HTTPException(status_code=422, detail=f"could not read a mesh from {source.name}")
+    return OverhangResponse(**geometry.overhang_report(mesh, angle_deg))
 
 
 # Mounted last and at "/" so it only serves requests none of the API routes
