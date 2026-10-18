@@ -12,7 +12,7 @@ Plan: `docs/print-tools-plan.md`. Owner asked to add these with plans to
 implement. Rule-based, no LLM, built like the spiral wand (manifold3d +
 trimesh, real-geometry tests). In order:
 
-1. **Split a model to fit the bed, with connectors** (M): cut planes chosen
+1. **DONE 2026-10-18 — Split a model to fit the bed, with connectors** (M): cut planes chosen
    so every piece fits, dowel holes or one-way D-pegs (reuse the wand's),
    `POST /models/{id}/split`; the Workshop Manager's fit check offers it.
 2. **Overhang highlighting** (S): toggle in the three.js viewers, optional

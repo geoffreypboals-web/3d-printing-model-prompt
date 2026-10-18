@@ -6,6 +6,16 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ## [Unreleased]
 
+### Added (split to fit, 2026-10-18)
+
+- `split.py`, `POST /models/{model_id}/split`, `GET /models/{model_id}/split.zip`
+  and `static/split.html`: cut a model too big for a printer into pieces
+  that fit, with dowel holes (plus printed pins) or one-way D-pegs on every
+  cut face, and an assembled/exploded 3D view. Printer presets include the
+  Centauri Carbon, Bambu X1/P1/A1 mini, Prusa MK4, Sovol SV08, Ender 3 and
+  CR-10. Shared mesh helpers moved to `geometry.py`; shared viewer code to
+  `static/viewer-kit.js`. Plan item 1 of `docs/print-tools-plan.md`.
+
 ### Added (spiral wand, 2026-10-11)
 
 - Spiral wand maker: `spiral_wand.py`, `POST /spiral-wand`,

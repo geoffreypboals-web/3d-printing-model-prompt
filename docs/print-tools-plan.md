@@ -1,6 +1,6 @@
 # Print tools plan (ideas from the 3DPrintCAD review)
 
-Date: 2026-10-17. Status: planned, nothing built yet.
+Date: 2026-10-17. Status: item 1 built 2026-10-18 (`split.py`); items 2-5 planned.
 
 ## Why
 

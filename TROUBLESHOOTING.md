@@ -335,3 +335,14 @@ might disrupt the volume (host rebuild, `docker compose down -v`, etc.).
   rider and wand were built with different rod settings; the GUI warns
   about this. Rebuild one of them to match.
 
+## Split to fit: a joint has no connector, or pins don't fit
+
+- **"N cut face(s) were too thin or small for a connector":** the model's
+  cross-section at that cut can't hold a hole of `connector_diameter_mm`
+  with a wall around it, or a hole there would break through the surface.
+  Glue that joint flat, or split again with a smaller diameter.
+- **Pins too tight or loose:** change `clearance_mm` (gap per side,
+  default 0.15 mm) and split again; the pin file itself doesn't change.
+- **"can't split ... into at most N pieces":** raise `max_pieces` or pick
+  a bigger printer.
+

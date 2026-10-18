@@ -4,7 +4,8 @@ File: /home/user/3d-printing-model-prompt/src/threedprompt/main.py
 Description: FastAPI application wiring together the classifier, the two
     generation backends (OpenSCAD for simple parts, Blender for complex
     ones), the wall-thickness endpoints, the mold-generation endpoints,
-    the spiral wand endpoints (twisted wand + figurine riders), and the
+    the spiral wand endpoints (twisted wand + figurine riders), the
+    split-to-fit endpoint, and the
     watertight analysis/repair endpoints. This is the only
     HTTP-facing module - it does no CAD/LLM work itself, only routing,
     validation, and translating domain errors into HTTP responses. Also
@@ -49,6 +50,8 @@ Troubleshooting:
       to tell "unreachable" apart from "reachable but replied
       unparseable"). See tag_suggester.py's header for the text-only vs.
       vision-based tagging tradeoff.
+    - 422 from /models/{id}/split carries split.py's message (no grid
+      within max_pieces fits the bed, or an unusable mesh).
     - 422 from /spiral-wand or /models/{id}/spiral-wand/rider carries
       spiral_wand.py's own message (impossible dimensions, or a mesh
       that isn't a closed solid - repair it in /watertight.html first).
@@ -76,6 +79,7 @@ from threedprompt import (
     mold,
     openscad_generator,
     spiral_wand,
+    split,
     storage,
     tag_suggester,
     thickness,
@@ -113,6 +117,9 @@ from threedprompt.models import (
     SpiralWandRequest,
     SpiralWandResponse,
     SpiralWandResult,
+    SplitRequest,
+    SplitResponse,
+    SplitResult,
     TagSuggestRequest,
     TagSuggestResponse,
     ThickenRequest,
@@ -123,6 +130,7 @@ from threedprompt.models import (
 from threedprompt.mold import MoldError
 from threedprompt.openscad_generator import OpenScadGenerationError
 from threedprompt.spiral_wand import SpiralWandError
+from threedprompt.split import SplitError
 from threedprompt.thickness import ThicknessError
 from threedprompt.watertight import WatertightError
 
@@ -947,11 +955,12 @@ def _any_model_file(model_id: str) -> Path:
 # --- Spiral wand (spiral_wand.py) ---
 
 _MODEL_ID_RE = re.compile(r"^[0-9a-f]{32}$")
-_SPIRAL_PART_RE = re.compile(r"^(wand_body|wand_section\d{1,2}|wand_cap|rider)\.stl$")
+# Part files the in-process tools write; GET /models/{id}/parts/{filename} serves only these.
+_PART_RE = re.compile(r"^(wand_body|wand_section\d{1,2}|wand_cap|rider|part_\d{2}|dowel_pin)\.stl$")
 _SPIRAL_ZIP_NAME = "spiral_wand.zip"
 
 
-def _spiral_model_dir(model_id: str) -> Path:
+def _checked_model_dir(model_id: str) -> Path:
     """Resolve a model_id to its directory, rejecting anything that isn't a 32-hex id (no path tricks)."""
     if not _MODEL_ID_RE.match(model_id):
         raise HTTPException(status_code=404, detail=f"no model with id {model_id!r}")
@@ -961,13 +970,13 @@ def _spiral_model_dir(model_id: str) -> Path:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-def _spiral_source_mesh(model_id: str) -> Path:
+def _mesh_source(model_id: str) -> Path:
     """
     Return the mesh file spiral_wand.py should read for model_id: model.stl
     if present, else the first model.* in a format trimesh can load.
     Raises HTTPException 404 for an unknown model_id, 422 for an unusable format.
     """
-    directory = _spiral_model_dir(model_id)
+    directory = _checked_model_dir(model_id)
     candidates = sorted(directory.glob("model.*"), key=lambda p: p.suffix.lower() != ".stl")
     for candidate in candidates:
         if candidate.suffix.lower() in spiral_wand.SUPPORTED_EXTENSIONS:
@@ -999,7 +1008,7 @@ def build_spiral_wand(request: SpiralWandRequest) -> SpiralWandResponse:
     """
     params = request.model_dump()
     cap_model_id = params.pop("cap_model_id")
-    cap_path = _spiral_source_mesh(cap_model_id) if cap_model_id else None
+    cap_path = _mesh_source(cap_model_id) if cap_model_id else None
     new_model_id, new_dir = storage.new_model_dir()
     try:
         result = spiral_wand.make_wand(new_dir, cap_mesh_path=cap_path, **params)
@@ -1017,7 +1026,7 @@ def build_spiral_rider(model_id: str, request: SpiralRiderRequest) -> SpiralWand
     /watertight/upload) into a rider: the figurine with a twisted bore
     that matches a wand built with the same rod settings.
     """
-    source = _spiral_source_mesh(model_id)
+    source = _mesh_source(model_id)
     new_model_id, new_dir = storage.new_model_dir()
     try:
         result = spiral_wand.make_rider(source, new_dir, **request.model_dump())
@@ -1033,21 +1042,60 @@ def build_spiral_rider(model_id: str, request: SpiralRiderRequest) -> SpiralWand
 @app.get("/models/{model_id}/spiral-wand.zip")
 def download_spiral_wand_zip(model_id: str) -> FileResponse:
     """Download every part of a spiral wand or rider build as one zip."""
-    path = _spiral_model_dir(model_id) / _SPIRAL_ZIP_NAME
+    path = _checked_model_dir(model_id) / _SPIRAL_ZIP_NAME
     if not path.is_file():
         raise HTTPException(status_code=404, detail="no spiral wand build for this model_id")
     return FileResponse(path, media_type="application/zip", filename=f"{model_id}_spiral_wand.zip")
 
 
 @app.get("/models/{model_id}/parts/{filename}")
-def download_spiral_part(model_id: str, filename: str) -> FileResponse:
-    """Download one STL part of a spiral wand/rider build (used by the browser viewer)."""
-    if not _SPIRAL_PART_RE.match(filename):
+def download_part(model_id: str, filename: str) -> FileResponse:
+    """Download one STL part of a spiral wand, rider or split build (used by the browser viewers)."""
+    if not _PART_RE.match(filename):
         raise HTTPException(status_code=404, detail=f"no part named {filename!r}")
-    path = _spiral_model_dir(model_id) / filename
+    path = _checked_model_dir(model_id) / filename
     if not path.is_file():
         raise HTTPException(status_code=404, detail=f"no part named {filename!r} for this model_id")
     return FileResponse(path, media_type="model/stl", filename=filename)
+
+
+# --- Split to fit the bed (split.py) ---
+
+_SPLIT_ZIP_NAME = "split.zip"
+
+
+@app.post("/models/{model_id}/split", response_model=SplitResponse)
+def split_model(model_id: str, request: SplitRequest) -> SplitResponse:
+    """
+    Cut a model too big for a printer into pieces that each fit the bed,
+    with dowel holes or one-way D-pegs on every cut face. Pieces keep the
+    model's coordinates, so they reassemble with no transform.
+    """
+    source = _mesh_source(model_id)
+    new_model_id, new_dir = storage.new_model_dir()
+    try:
+        result: SplitResult = split.split_to_fit(source, new_dir, **request.model_dump())
+    except SplitError as exc:
+        shutil.rmtree(new_dir, ignore_errors=True)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    storage.save_spec(new_model_id, {"parent_model_id": model_id, "method": "split", "params": request.model_dump()})
+    storage.make_zip(new_model_id, [part.filename for part in result.parts], zip_name=_SPLIT_ZIP_NAME)
+    parts = [part.model_copy(update={"url": f"/models/{new_model_id}/parts/{part.filename}"}) for part in result.parts]
+    return SplitResponse(
+        **result.model_dump(exclude={"parts"}),
+        parts=parts,
+        model_id=new_model_id,
+        download_url=f"/models/{new_model_id}/split.zip",
+    )
+
+
+@app.get("/models/{model_id}/split.zip")
+def download_split_zip(model_id: str) -> FileResponse:
+    """Download every piece (and the dowel pin) of a split as one zip."""
+    path = _checked_model_dir(model_id) / _SPLIT_ZIP_NAME
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="no split for this model_id")
+    return FileResponse(path, media_type="application/zip", filename=f"{model_id}_split.zip")
 
 
 # Mounted last and at "/" so it only serves requests none of the API routes
