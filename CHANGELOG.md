@@ -6,6 +6,19 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ## [Unreleased]
 
+### Added (tool insert from a photo, 2026-10-18)
+
+- `tool_insert.py`, `POST /tool-insert/trace`, `POST /tool-insert` and
+  `static/tool-insert.html`: photograph tools on white paper with a dark
+  calibration square; the sheet is found and flattened (A4/Letter/A3/Legal
+  aspect), the square sets the scale, and each tool's outline is drawn for
+  editing (drag/add/remove points, finger notches, manual two-point scale).
+  The edited outlines become a fitted or Gridfinity tray with a pocket per
+  tool (clearance, depth, floor, stepped top chamfer). Gridfinity sizes and
+  feet in `gridfinity.py`, shared with the coming bin template. New
+  dependency `opencv-python-headless` (Apache-2.0). Plan item 3 of
+  `docs/print-tools-plan.md`.
+
 ### Added (overhang check, 2026-10-18)
 
 - Overhang highlighting: an **overhangs** toggle on `split.html`,

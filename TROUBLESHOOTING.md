@@ -346,6 +346,26 @@ might disrupt the volume (host rebuild, `docker compose down -v`, etc.).
 - **"can't split ... into at most N pieces":** raise `max_pieces` or pick
   a bigger printer.
 
+## Tool insert: wrong size, merged tools, or no square found
+
+- **"Calibration square not found":** the square must be solid, dark,
+  square (not a rectangle) and well apart from the tools; a printed square
+  that came out grey can fall below the threshold. Or use **Set scale** in
+  the page with two points a known distance apart.
+- **Sizes off along one direction:** the paper size setting doesn't match
+  the sheet (the flattened photo is given that sheet's shape). With
+  "Other", shoot from straight above.
+- **Two tools traced as one shape:** they touch or their shadows do; leave
+  a gap, light from above, or fix the outline by hand.
+- **Shadow included in the outline:** drag those points in; the clearance
+  is added afterwards, so trace the tool itself.
+- **Gridfinity insert taller than expected:** the height rounds up to whole
+  7 mm units including the 4.75 mm feet; the extra goes into the floor
+  (reported as `floor_mm`). Set *Height units* or a shallower pocket.
+- **Slicer says non-manifold after editing outlines:** an outline that
+  crosses itself is filled by the non-zero rule; drag the crossing points
+  apart and rebuild.
+
 ## Overhang check: red faces where you didn't expect them
 
 - **The whole bottom is red:** the model's lowest point isn't flat on the

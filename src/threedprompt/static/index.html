@@ -6,8 +6,8 @@ Description: Minimal browser UI for the service, served at "/" by main.py
     generate a model from a text prompt, and increase the wall thickness
     of a local file via a real file picker - both trigger a browser
     download of the resulting STL. Also links to the watertight checker
-    (watertight.html), the spiral wand maker (spiral-wand.html) and split
-    to fit (split.html). No build step, no external scripts/CDNs
+    (watertight.html), the spiral wand maker (spiral-wand.html), split
+    to fit (split.html) and the tool insert maker (tool-insert.html). No build step, no external scripts/CDNs
     (Docker-first, works fully offline once the container is up).
 Inputs: User interaction (prompt text, file picker, amount_mm); calls the
     same-origin JSON API in main.py (POST /generate, POST /thicken,
@@ -153,6 +153,16 @@ Troubleshooting:
       glued. See the pieces assembled or pulled apart before you print.
     </p>
     <a href="/split.html"><button type="button">Open split to fit</button></a>
+  </section>
+
+  <section>
+    <h2>Tool insert from a photo</h2>
+    <p class="hint" style="margin-top:0">
+      Photograph tools on white paper next to a dark square of known size,
+      fix the traced outlines, and get a tray (fitted or Gridfinity) with a
+      pocket shaped like each tool.
+    </p>
+    <a href="/tool-insert.html"><button type="button">Open tool insert maker</button></a>
   </section>
 </main>
 

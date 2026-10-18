@@ -446,6 +446,33 @@ measure for any model: `overhang_area_mm2`, `total_area_mm2`,
 `overhang_fraction` and `overhang_face_count`, printed Z up as stored.
 Plan: `docs/print-tools-plan.md` item 2.
 
+## Tool insert from a photo
+
+Open `http://localhost:8000/tool-insert.html`. Lay your tools on a sheet of
+plain white paper, put a solid dark square of known size (10-30 mm; print
+one or cut it from black card) on the sheet beside them, and take a photo
+from roughly above with the whole sheet in frame. Pick the paper size and
+square size, then **Trace outlines**: the page finds the sheet, corrects
+the perspective, uses the square for scale and draws each tool's outline
+over the photo. Fix anything it got wrong: drag points, double-click an
+edge to add one, right-click to remove one, switch off shapes you don't
+want, and add round finger notches. No square? Use **Set scale** and click
+two points a known distance apart (the paper's long edge works).
+
+**Build insert** makes a tray with a pocket per tool: the outline grown by
+the clearance (snug 0.5 / normal 1 / loose 2 mm), at the depth you choose,
+with an optional stepped chamfer on the top edge. *Fitted box* is just big
+enough for the pockets plus the wall; *Gridfinity* rounds up to 42 mm grid
+units and 7 mm height units and adds the standard stepped feet (no stacking
+lip, so the insert sits flush; no magnet holes yet).
+
+API: `POST /tool-insert/trace` (multipart: `file`, `square_mm`, `paper`,
+optional `mm_per_px`) returns outlines in pixels and mm plus a JPEG preview
+of the corrected sheet; nothing is stored. `POST /tool-insert` (JSON:
+`tools[{outline_mm, notches}]` and tray settings) builds
+`tool_insert.stl` under a new `model_id`. Image processing uses OpenCV;
+geometry is manifold3d. Plan: `docs/print-tools-plan.md` item 3.
+
 ## STEP conversion & solid healing
 
 Two FreeCAD-backed capabilities Blender can't provide at all:
@@ -545,10 +572,12 @@ Generator interview, so answers can be spoken instead of typed.
 | POST   | `/models/{model_id}/repair-solid` | Heals B-rep topology via FreeCAD ShapeFix -> JSON, overwrites in place |
 | POST   | `/spiral-wand`                | Wand + rod settings (all optional) -> JSON w/ model_id, parts (URLs, assembly offsets), notes |
 | POST   | `/models/{model_id}/spiral-wand/rider` | Rod + rider settings -> JSON w/ new model_id and the rider part |
-| GET    | `/models/{model_id}/parts/{filename}` | Download one spiral wand, rider or split STL part             |
+| GET    | `/models/{model_id}/parts/{filename}` | Download one spiral wand, rider, split or tool insert STL part |
 | POST   | `/models/{model_id}/split`    | Bed size + connector settings -> JSON w/ new model_id, pieces (fit + print hint), zip URL |
 | GET    | `/models/{model_id}/overhangs` | `?angle_deg=45` -> JSON: area/fraction of the surface that needs support (Z up) |
 | GET    | `/models/{model_id}/split.zip` | Download every piece of a split (and the dowel pin) as one zip         |
+| POST   | `/tool-insert/trace`          | Photo of tools on paper (multipart) -> JSON: outlines in px and mm, corrected preview |
+| POST   | `/tool-insert`                | Tool outlines + tray settings -> JSON w/ new model_id and `tool_insert.stl` URL |
 | GET    | `/models/{model_id}/spiral-wand.zip` | Download every part of a spiral wand / rider build as one zip  |
 | POST   | `/thumbnail`                  | multipart upload (`file`, `size`) -> **a PNG thumbnail**                |
 | POST   | `/tags/suggest`               | `{"file_name": "...", ...}` -> JSON w/ suggested tags + method          |
@@ -806,6 +835,8 @@ This project is intended to be open source (CLAUDE.md rule 7), MIT licensed
 | `trimesh` | MIT | mesh I/O and light repair for the spiral wand feature |
 | `manifold3d` | Apache-2.0 | in-process mesh booleans and twisted extrusions for the spiral wand feature |
 | `networkx` | BSD-3-Clause | used by trimesh's hole filling |
+| `opencv-python-headless` | Apache-2.0 | photo tracing for the tool insert; its wheels bundle FFmpeg shared libraries (LGPL) - dynamically linked, keep FFmpeg's notice if redistributing the image |
+| Gridfinity (sizes only, no files) | MIT | the 42 mm grid, 7 mm height unit and foot profile in `gridfinity.py` follow Zack Freedman's published spec |
 | import_3dm v0.0.18 reader (vendored, `src/threedprompt/blender_scripts/vendor/rhino3dm_reader/`) | MIT | `.3dm` import inside Blender; license + `NOTICE.md` kept alongside |
 | `rhino3dm` (pip, installed into the image's system Python for Blender) | MIT | only needed for `.3dm` input |
 | OpenSCAD | GPL-2.0 | invoked as an external CLI process (subprocess), not linked into this codebase - GPL applies to OpenSCAD itself, not to this project |

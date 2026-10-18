@@ -697,7 +697,7 @@ class SplitRequest(BaseModel):
 
 
 class SplitPart(BaseModel):
-    """One STL produced by split.py."""
+    """One STL produced by split.py (also used for tool_insert.py's single tray)."""
 
     filename: str
     role: Literal["piece", "pin"]
@@ -734,3 +734,77 @@ class OverhangResponse(BaseModel):
     overhang_fraction: float = Field(description="Share of the surface that needs support, 0..1.")
     overhang_face_count: int
     angle_deg: float
+
+
+# --- Tool insert from a photo (tool_insert.py) ---
+# See docs/print-tools-plan.md item 3.
+
+
+class TracedTool(BaseModel):
+    """One shape traced from the photo."""
+
+    outline_px: list[list[float]] = Field(description="Outline in preview-image pixels (y down).")
+    outline_mm: list[list[float]] | None = Field(
+        None, description="Outline in mm (y up, origin at the paper's bottom-left); null when the scale is unknown."
+    )
+
+
+class TraceResult(BaseModel):
+    """POST /tool-insert/trace response body."""
+
+    mm_per_px: float | None = Field(description="Scale of the preview image; null when no calibration was found.")
+    paper_found: bool
+    square_px: list[list[float]] | None = Field(None, description="Corners of the calibration square, in pixels.")
+    width_px: int
+    height_px: int
+    preview: str = Field(description="The perspective-corrected photo as a JPEG data URL.")
+    tools: list[TracedTool]
+    notes: list[str] = Field(default_factory=list)
+
+
+class Notch(BaseModel):
+    """A round finger notch added to a tool's pocket."""
+
+    x: float = Field(allow_inf_nan=False)
+    y: float = Field(allow_inf_nan=False)
+    d: float = Field(20.0, ge=5, le=60, description="Notch diameter in mm.")
+
+
+class ToolOutline(BaseModel):
+    """One tool's (edited) outline for POST /tool-insert."""
+
+    outline_mm: list[list[float]] = Field(min_length=3, max_length=5000)
+    notches: list[Notch] = Field(default_factory=list, max_length=20)
+
+
+class ToolInsertRequest(BaseModel):
+    """POST /tool-insert request body."""
+
+    tools: list[ToolOutline] = Field(min_length=1, max_length=20)
+    clearance_mm: float = Field(1.0, ge=0, le=5, description="Gap around each tool: 0.5 snug, 1 normal, 2 loose.")
+    depth_mm: float = Field(15.0, ge=2, le=150, description="Pocket depth.")
+    floor_mm: float = Field(2.0, ge=0.6, le=20, description="Material under the pockets.")
+    wall_mm: float = Field(4.0, ge=1, le=50, description="Minimum material between pockets and the tray edge.")
+    tray: Literal["fit", "gridfinity"] = "fit"
+    corner_radius_mm: float = Field(4.0, ge=0, le=30)
+    chamfer_mm: float = Field(1.0, ge=0, le=5, description="Stepped chamfer on the pocket's top edge.")
+    height_units: int | None = Field(None, ge=2, le=30, description="Gridfinity height (7 mm units); null = auto.")
+
+
+class ToolInsertResult(BaseModel):
+    """Output of tool_insert.make_insert(); also the core of ToolInsertResponse."""
+
+    parts: list[SplitPart]
+    tray: str
+    grid_units: list[int] | None = Field(None, description="Gridfinity [x units, y units, height units].")
+    size_mm: list[float]
+    pocket_depth_mm: float
+    floor_mm: float
+    pocket_area_mm2: float
+    notes: list[str] = Field(default_factory=list)
+
+
+class ToolInsertResponse(ToolInsertResult):
+    """POST /tool-insert response body."""
+
+    model_id: str
