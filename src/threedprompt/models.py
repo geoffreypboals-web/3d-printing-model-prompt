@@ -808,3 +808,95 @@ class ToolInsertResponse(ToolInsertResult):
     """POST /tool-insert response body."""
 
     model_id: str
+
+
+# --- Rule-based templates (gridfinity.py, gear.py, lithophane.py, qr_tag.py) ---
+# See docs/print-tools-plan.md item 4.
+
+
+class TemplatePart(BaseModel):
+    """One STL produced by a template."""
+
+    filename: str
+    size_mm: list[float]
+    print_hint: str | None = None
+    url: str | None = None
+
+
+class TemplateResult(BaseModel):
+    """Output of every template builder; also the core of TemplateResponse."""
+
+    parts: list[TemplatePart]
+    notes: list[str] = Field(default_factory=list)
+    report: dict = Field(default_factory=dict, description="Template-specific numbers (sizes, gear mesh check, ...).")
+
+
+class TemplateResponse(TemplateResult):
+    """Response body of every POST /templates/... route."""
+
+    model_id: str
+
+
+class GridfinityBinRequest(BaseModel):
+    """POST /templates/gridfinity-bin request body."""
+
+    units_x: int = Field(2, ge=1, le=8, description="Width in 42 mm grid units.")
+    units_y: int = Field(1, ge=1, le=8, description="Depth in 42 mm grid units.")
+    height_units: int = Field(6, ge=2, le=20, description="Body height in 7 mm units (the lip adds 4.75 mm).")
+    compartments_x: int = Field(1, ge=1, le=10)
+    compartments_y: int = Field(1, ge=1, le=10)
+    wall_mm: float = Field(1.2, ge=0.8, le=5)
+    divider_mm: float = Field(1.2, ge=0.8, le=5)
+    floor_mm: float = Field(1.2, ge=0.6, le=10, description="Floor above the feet.")
+    stacking_lip: bool = True
+    label_tab: bool = False
+    magnet_holes: bool = False
+
+
+class GearRequest(BaseModel):
+    """POST /templates/gear request body."""
+
+    module: float = Field(2.0, ge=0.5, le=10, description="Tooth size in mm (pitch diameter / teeth).")
+    teeth: int = Field(20, ge=8, le=200)
+    pressure_angle_deg: float = Field(20.0, ge=14.5, le=30)
+    backlash_mm: float = Field(0.15, ge=0, le=1, description="Total play of a pair along the pitch circle.")
+    face_width_mm: float = Field(8.0, ge=1, le=100)
+    helix_angle_deg: float = Field(0.0, ge=-45, le=45, description="0 = spur gear.")
+    bore: Literal["none", "round", "d", "hex"] = "round"
+    bore_diameter_mm: float = Field(5.0, ge=0, le=100, description="Bore size (across flats for hex).")
+    mate_teeth: int | None = Field(None, ge=8, le=200, description="Also build a mating gear with this many teeth.")
+    rack_teeth: int | None = Field(None, ge=2, le=200, description="Also build a rack with this many teeth.")
+    rack_height_mm: float = Field(6.0, ge=1, le=50, description="Rack body below the tooth roots.")
+
+
+class LithophaneRequest(BaseModel):
+    """Form fields of POST /templates/lithophane (the image is the multipart `file`)."""
+
+    shape: Literal["flat", "curved", "cylinder"] = "flat"
+    width_mm: float = Field(
+        100.0, ge=20, le=400, description="Panel width; arc length for curved, circumference for cylinder."
+    )
+    min_thickness_mm: float = Field(0.8, ge=0.4, le=5, description="Thickness at white.")
+    max_thickness_mm: float = Field(3.0, ge=0.8, le=10, description="Thickness at black.")
+    resolution_mm: float = Field(0.25, ge=0.1, le=2, description="Panel size of one image pixel.")
+    frame_mm: float = Field(3.0, ge=0, le=30, description="Solid border (top and bottom only on a cylinder).")
+    curve_deg: float = Field(120.0, ge=10, le=300, description="Arc of a curved panel.")
+
+
+class QrTagRequest(BaseModel):
+    """POST /templates/qr-tag request body. A Wi-Fi password is never logged or stored in the spec."""
+
+    kind: Literal["text", "wifi"] = "text"
+    text: str = Field("", max_length=1000, description="Text or URL (kind=text).")
+    ssid: str = Field("", max_length=64, description="Wi-Fi network name (kind=wifi).")
+    password: str = Field("", max_length=128, description="Wi-Fi password (kind=wifi); ends up in the printed code.")
+    security: Literal["WPA", "WEP", "nopass"] = "WPA"
+    error_correction: Literal["l", "m", "q", "h"] = "m"
+    module_mm: float = Field(2.0, ge=0.8, le=10, description="Size of one QR square.")
+    quiet_zone: int = Field(2, ge=1, le=6, description="Empty border in modules (4 is the standard).")
+    plate_mm: float = Field(3.0, ge=1, le=10)
+    code_height_mm: float = Field(1.0, ge=0.2, le=5)
+    corner_radius_mm: float = Field(3.0, ge=0, le=20)
+    keyring_hole: bool = True
+    nfc_pocket: bool = False
+    nfc_diameter_mm: float = Field(25.0, ge=10, le=60)

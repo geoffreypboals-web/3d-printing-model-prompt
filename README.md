@@ -473,6 +473,32 @@ of the corrected sheet; nothing is stored. `POST /tool-insert` (JSON:
 `tool_insert.stl` under a new `model_id`. Image processing uses OpenCV;
 geometry is manifold3d. Plan: `docs/print-tools-plan.md` item 3.
 
+## Print templates
+
+Open `http://localhost:8000/templates.html`. Four parametric parts, built by
+rules (no AI), each shown in the 3D viewer with its STLs and a report:
+
+- **Gridfinity bin:** width/depth in 42 mm units, height in 7 mm units,
+  a grid of compartments, stacking lip, 45 deg label tabs (print without
+  support) and 6.5 x 2.4 mm magnet holes in each foot. Sizes follow the
+  published Gridfinity spec (`gridfinity.py`); the lip is an approximation.
+- **Gears:** involute spur or helical gears from module, tooth count,
+  pressure angle and backlash, with round, D or hex bores; optionally a
+  mating gear (placed in mesh, opposite helix) and a rack. The report gives
+  pitch/tip/root diameters, centre distance and contact ratio.
+- **Lithophane:** a photo becomes a height map (darker = thicker) on a
+  flat panel, a curved panel or a cylinder lamp shade, with a solid frame.
+- **QR tag:** text, a URL or Wi-Fi login as a raised QR code on a plate,
+  with key-ring hole and NFC sticker pocket. The plate and code are also
+  separate STLs for two-colour printing. A Wi-Fi password ends up in the
+  printed code (that's what it's for) but is never logged or saved in the
+  model's spec.
+
+API: `POST /templates/gridfinity-bin`, `/templates/gear`, `/templates/qr-tag`
+(JSON) and `/templates/lithophane` (multipart: `file` + settings). Each
+returns a `model_id`, part URLs, notes and a `report`. Plan:
+`docs/print-tools-plan.md` item 4.
+
 ## STEP conversion & solid healing
 
 Two FreeCAD-backed capabilities Blender can't provide at all:
@@ -578,6 +604,10 @@ Generator interview, so answers can be spoken instead of typed.
 | GET    | `/models/{model_id}/split.zip` | Download every piece of a split (and the dowel pin) as one zip         |
 | POST   | `/tool-insert/trace`          | Photo of tools on paper (multipart) -> JSON: outlines in px and mm, corrected preview |
 | POST   | `/tool-insert`                | Tool outlines + tray settings -> JSON w/ new model_id and `tool_insert.stl` URL |
+| POST   | `/templates/gridfinity-bin`   | Grid/height units, compartments, lip, tabs, magnets -> JSON w/ model_id, part URLs, report |
+| POST   | `/templates/gear`             | Module, teeth, pressure angle, backlash, bore (+ mate, rack) -> parts + mesh report |
+| POST   | `/templates/lithophane`       | Image (multipart) + shape/thickness/frame -> `lithophane.stl` |
+| POST   | `/templates/qr-tag`           | Text/URL or Wi-Fi -> raised QR tag + separate plate/code STLs |
 | GET    | `/models/{model_id}/spiral-wand.zip` | Download every part of a spiral wand / rider build as one zip  |
 | POST   | `/thumbnail`                  | multipart upload (`file`, `size`) -> **a PNG thumbnail**                |
 | POST   | `/tags/suggest`               | `{"file_name": "...", ...}` -> JSON w/ suggested tags + method          |
@@ -836,6 +866,7 @@ This project is intended to be open source (CLAUDE.md rule 7), MIT licensed
 | `manifold3d` | Apache-2.0 | in-process mesh booleans and twisted extrusions for the spiral wand feature |
 | `networkx` | BSD-3-Clause | used by trimesh's hole filling |
 | `opencv-python-headless` | Apache-2.0 | photo tracing for the tool insert; its wheels bundle FFmpeg shared libraries (LGPL) - dynamically linked, keep FFmpeg's notice if redistributing the image |
+| `segno` | BSD-3-Clause | QR code encoding for the QR tag template |
 | Gridfinity (sizes only, no files) | MIT | the 42 mm grid, 7 mm height unit and foot profile in `gridfinity.py` follow Zack Freedman's published spec |
 | import_3dm v0.0.18 reader (vendored, `src/threedprompt/blender_scripts/vendor/rhino3dm_reader/`) | MIT | `.3dm` import inside Blender; license + `NOTICE.md` kept alongside |
 | `rhino3dm` (pip, installed into the image's system Python for Blender) | MIT | only needed for `.3dm` input |

@@ -6,6 +6,17 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ## [Unreleased]
 
+### Added (print templates, 2026-10-18)
+
+- `static/templates.html` and `POST /templates/{gridfinity-bin,gear,lithophane,qr-tag}`:
+  Gridfinity bins (compartments, stacking lip, label tabs, magnet holes;
+  `gridfinity.make_bin`), involute spur/helical gears with mating gear,
+  rack and a mesh report (`gear.py`, own code, no library), lithophanes
+  (flat/curved/cylinder with frame; `lithophane.py`, OpenCV decode) and
+  QR tags (text/URL/Wi-Fi, key-ring hole, NFC pocket, two-colour parts;
+  `qr_tag.py`). New dependency `segno` (BSD-3-Clause). Wi-Fi passwords are
+  not stored in the spec. Plan item 4 of `docs/print-tools-plan.md`.
+
 ### Added (tool insert from a photo, 2026-10-18)
 
 - `tool_insert.py`, `POST /tool-insert/trace`, `POST /tool-insert` and

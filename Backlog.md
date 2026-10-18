@@ -20,7 +20,7 @@ trimesh, real-geometry tests). In order:
 3. **DONE 2026-10-18 — Tool insert from a photo** (L): paper + calibration square → scaled
    outline (OpenCV, Apache-2.0) → editable outline → pocket tray, Gridfinity
    or custom.
-4. **Rule-based templates** (M each): Gridfinity bin, involute gears (own
+4. **DONE 2026-10-18 — Rule-based templates** (M each): Gridfinity bin, involute gears (own
    code), lithophane (Pillow), QR tag (segno).
 5. **Multi-colour 3MF export** (M): one filament per part for the AMS and
    CANVAS; slicer metadata research first.

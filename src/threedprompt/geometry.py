@@ -40,6 +40,10 @@ class GeometryError(RuntimeError):
     """Raised for an input mesh that can't be read or isn't a closed solid."""
 
 
+class TemplateError(RuntimeError):
+    """Raised by the rule-based templates for settings that can't make a printable part."""
+
+
 def to_trimesh(m: mf.Manifold) -> trimesh.Trimesh:
     """Convert a manifold3d solid into a trimesh mesh (for STL export)."""
     mesh = m.to_mesh()
