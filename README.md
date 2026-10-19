@@ -475,13 +475,24 @@ geometry is manifold3d. Plan: `docs/print-tools-plan.md` item 3.
 
 ## Print templates
 
-Open `http://localhost:8000/templates.html`. Four parametric parts, built by
+Open `http://localhost:8000/templates.html`. Six parametric parts, built by
 rules (no AI), each shown in the 3D viewer with its STLs and a report:
 
 - **Gridfinity bin:** width/depth in 42 mm units, height in 7 mm units,
   a grid of compartments, stacking lip, 45 deg label tabs (print without
   support) and 6.5 x 2.4 mm magnet holes in each foot. Sizes follow the
   published Gridfinity spec (`gridfinity.py`); the lip is an approximation.
+- **Minis bin:** a Gridfinity bin for miniatures. The floor is a grid of
+  round sockets, one per base (25, 28, 32, 40, 50 or 60 mm, plus clearance),
+  so figures can't slide into each other, with an optional magnet hole under
+  each socket and the bin open above them for the figures. The report gives
+  the socket count and the headroom.
+- **Terrain tile:** a tabletop tile from a seeded height field: rolling
+  hills, rocky ridges, craters or mesas. Terraces step the surface into flat
+  levels for miniatures to stand on, and the report says how much of the
+  tile is under 15 deg. The edges always ease down to the base height, so
+  tiles from any seed join, and optional magnet holes in the bottom corners
+  hold them together. Same seed + settings = same tile (`terrain.py`).
 - **Gears:** involute spur or helical gears from module, tooth count,
   pressure angle and backlash, with round, D or hex bores; optionally a
   mating gear (placed in mesh, opposite helix) and a rack. The report gives
@@ -494,7 +505,8 @@ rules (no AI), each shown in the 3D viewer with its STLs and a report:
   printed code (that's what it's for) but is never logged or saved in the
   model's spec.
 
-API: `POST /templates/gridfinity-bin`, `/templates/gear`, `/templates/qr-tag`
+API: `POST /templates/gridfinity-bin`, `/templates/minis-bin`, `/templates/terrain`,
+`/templates/gear`, `/templates/qr-tag`
 (JSON) and `/templates/lithophane` (multipart: `file` + settings). Each
 returns a `model_id`, part URLs, notes and a `report`. Plan:
 `docs/print-tools-plan.md` item 4.
@@ -628,6 +640,8 @@ Generator interview, so answers can be spoken instead of typed.
 | POST   | `/tool-insert/trace`          | Photo of tools on paper (multipart) -> JSON: outlines in px and mm, corrected preview |
 | POST   | `/tool-insert`                | Tool outlines + tray settings -> JSON w/ new model_id and `tool_insert.stl` URL |
 | POST   | `/templates/gridfinity-bin`   | Grid/height units, compartments, lip, tabs, magnets -> JSON w/ model_id, part URLs, report |
+| POST   | `/templates/minis-bin`        | Grid/height units, base diameter, socket depth, magnets -> `minis_bin.stl` + socket report |
+| POST   | `/templates/terrain`          | Style, seed, size, height, terraces, edge fade, magnets -> `terrain_tile.stl` + report |
 | POST   | `/templates/gear`             | Module, teeth, pressure angle, backlash, bore (+ mate, rack) -> parts + mesh report |
 | POST   | `/templates/lithophane`       | Image (multipart) + shape/thickness/frame -> `lithophane.stl` |
 | POST   | `/templates/qr-tag`           | Text/URL or Wi-Fi -> raised QR tag + separate plate/code STLs |

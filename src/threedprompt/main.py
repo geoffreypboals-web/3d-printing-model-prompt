@@ -100,6 +100,7 @@ from threedprompt import (
     split,
     storage,
     tag_suggester,
+    terrain,
     thickness,
     threemf,
     thumbnail,
@@ -134,6 +135,7 @@ from threedprompt.models import (
     Hole,
     HoleClassification,
     LithophaneRequest,
+    MinisBinRequest,
     MoldRequest,
     MoldResponse,
     OverhangResponse,
@@ -152,6 +154,7 @@ from threedprompt.models import (
     TagSuggestResponse,
     TemplateResponse,
     TemplateResult,
+    TerrainRequest,
     ThickenRequest,
     ThickenResponse,
     ToolInsertRequest,
@@ -992,7 +995,7 @@ _MODEL_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 # Part files the in-process tools write; GET /models/{id}/parts/{filename} serves only these.
 _PART_RE = re.compile(
     r"^(wand_body|wand_section\d{1,2}|wand_cap|rider|part_\d{2}|dowel_pin|tool_insert"
-    r"|gridfinity_bin|gear|gear_mate|rack|lithophane|qr_tag|qr_plate|qr_code)\.stl$"
+    r"|gridfinity_bin|minis_bin|terrain_tile|gear|gear_mate|rack|lithophane|qr_tag|qr_plate|qr_code)\.stl$"
 )
 _SPIRAL_ZIP_NAME = "spiral_wand.zip"
 
@@ -1204,6 +1207,20 @@ def template_gridfinity_bin(request: GridfinityBinRequest) -> TemplateResponse:
     """Gridfinity bin: grid units, height units, compartments, stacking lip, label tabs, magnet holes."""
     params = request.model_dump()
     return _run_template("gridfinity_bin", lambda d: gridfinity.make_bin(d, **params), params)
+
+
+@app.post("/templates/minis-bin", response_model=TemplateResponse)
+def template_minis_bin(request: MinisBinRequest) -> TemplateResponse:
+    """Gridfinity bin for miniatures: a socket per round base, optional magnet holes, room for the figures."""
+    params = request.model_dump()
+    return _run_template("minis_bin", lambda d: gridfinity.make_minis_bin(d, **params), params)
+
+
+@app.post("/templates/terrain", response_model=TemplateResponse)
+def template_terrain(request: TerrainRequest) -> TemplateResponse:
+    """Tabletop terrain tile: hills, ridges, craters or mesas from a seed; terraces, joinable edges, magnets."""
+    params = request.model_dump()
+    return _run_template("terrain", lambda d: terrain.make_terrain(d, **params), params)
 
 
 @app.post("/templates/gear", response_model=TemplateResponse)
