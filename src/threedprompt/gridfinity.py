@@ -3,7 +3,8 @@ Project: 3D Printing Model Prompt
 File: /home/user/3d-printing-model-prompt/src/threedprompt/gridfinity.py
 Description: Gridfinity sizes, the stepped base profile and the bin
     template (make_bin: compartments, stacking lip, label tabs, magnet
-    holes), built with manifold3d. The base is shared with the tool insert
+    holes) and the miniatures bin (make_minis_bin: a socket per base),
+    built with manifold3d. The base is shared with the tool insert
     (tool_insert.py); the bin is docs/print-tools-plan.md item 4.
     Gridfinity is Zack Freedman's open (MIT) storage system: a 42 mm grid,
     7 mm height units, bins 0.5 mm smaller than the grid so they drop in,
@@ -226,6 +227,109 @@ def make_bin(
         report={
             "units": [units_x, units_y, height_units],
             "compartment_mm": [round(cell_x, 2), round(cell_y, 2), round(top - floor_z, 2)],
+            "volume_cm3": round(result.volume() / 1000, 1),
+        },
+    )
+
+
+MINIS_BIN_FILENAME = "minis_bin.stl"
+
+
+def make_minis_bin(
+    output_dir: Path,
+    *,
+    units_x: int,
+    units_y: int,
+    height_units: int,
+    base_diameter_mm: float,
+    base_clearance_mm: float,
+    socket_depth_mm: float,
+    socket_gap_mm: float,
+    wall_mm: float,
+    magnet_diameter_mm: float,
+    magnet_depth_mm: float,
+    stacking_lip: bool,
+) -> TemplateResult:
+    """
+    Build a Gridfinity bin for miniatures and write it to minis_bin.stl.
+
+    The floor is a grid of round sockets, one per miniature base, so each
+    figure stands in its own place and can't slide into its neighbour; above
+    them the bin is open up to its height, for the figures themselves.
+
+    Args:
+        output_dir: where the STL goes.
+        units_x, units_y: footprint in 42 mm grid units.
+        height_units: body height in 7 mm units; pick it from the tallest figure.
+        base_diameter_mm: the miniatures' round base (25, 32, 40, 50 ...).
+        base_clearance_mm: added to the base diameter so bases drop in.
+        socket_depth_mm: how deep each base sits (a base is about 3-4 mm thick).
+        socket_gap_mm: solid floor left between two sockets.
+        wall_mm: outer wall thickness.
+        magnet_diameter_mm: hole under each socket for a magnet (0 = none), so
+            magnetised bases (or a steel washer in the hole) stay put.
+        magnet_depth_mm: depth of that hole.
+        stacking_lip: add the lip that the next bin's feet sit in.
+    Returns:
+        TemplateResult with the one part; report has the socket count.
+    Raises:
+        geometry.TemplateError: no socket fits, or the bin is too short.
+    """
+    notes: list[str] = []
+    top = height_units * HEIGHT_UNIT_MM
+    socket_d = base_diameter_mm + base_clearance_mm
+    magnet = magnet_diameter_mm > 0
+    under = 0.8 + (magnet_depth_mm if magnet else 0)  # solid floor under a socket (and its magnet)
+    floor_z = FOOT_HEIGHT_MM + under + socket_depth_mm
+    if floor_z >= top - 2:
+        raise geometry.TemplateError("the bin is too short for its sockets; add height units")
+    if magnet and magnet_diameter_mm > socket_d - 2:
+        raise geometry.TemplateError("the magnet hole is wider than the socket")
+    inner_x = footprint_mm(units_x) - 2 * wall_mm
+    inner_y = footprint_mm(units_y) - 2 * wall_mm
+    pitch = socket_d + socket_gap_mm
+    nx = int((inner_x - socket_d) // pitch) + 1 if inner_x >= socket_d else 0
+    ny = int((inner_y - socket_d) // pitch) + 1 if inner_y >= socket_d else 0
+    if nx < 1 or ny < 1:
+        raise geometry.TemplateError(
+            f"a {base_diameter_mm:g} mm base doesn't fit in {units_x} x {units_y} units; make the bin bigger"
+        )
+    solid = base(units_x, units_y) + body(units_x, units_y, top)
+    pocket = rounded_rect(inner_x, inner_y, max(0.5, OUTER_RADIUS_MM - wall_mm))
+    cuts = [mf.Manifold.extrude(pocket, top - floor_z + 0.5).translate((0, 0, floor_z))]
+    z_socket = floor_z - socket_depth_mm
+    for i in range(nx):
+        for j in range(ny):
+            cx = (i - (nx - 1) / 2) * pitch
+            cy = (j - (ny - 1) / 2) * pitch
+            # 0.01 mm into the open cavity above, so the faces aren't coplanar.
+            cuts.append(geometry.cylinder(socket_d / 2, socket_depth_mm + 0.01, z_socket, 96).translate((cx, cy, 0)))
+            if magnet:
+                cuts.append(
+                    geometry.cylinder(
+                        magnet_diameter_mm / 2, magnet_depth_mm + 0.01, z_socket - magnet_depth_mm, 48
+                    ).translate((cx, cy, 0))
+                )
+    if stacking_lip:
+        block, cavity = lip_parts(units_x, units_y, top)
+        solid = solid + block
+        cuts.append(cavity)
+    result = solid - mf.Manifold.batch_boolean(cuts, mf.OpType.Add)
+    size_mm = geometry.save(result, output_dir / MINIS_BIN_FILENAME)
+    headroom = top - floor_z
+    notes.append(f"Room for figures {headroom:.0f} mm tall above the base (more without a bin stacked on top).")
+    if magnet:
+        size = f"{magnet_diameter_mm:g} x {magnet_depth_mm:g} mm"
+        notes.append(f"Magnet holes {size}: glue the magnets in, all the same pole up.")
+    return TemplateResult(
+        parts=[TemplatePart(filename=MINIS_BIN_FILENAME, size_mm=size_mm, print_hint="print as modelled (feet down)")],
+        notes=notes,
+        report={
+            "units": [units_x, units_y, height_units],
+            "sockets": [nx, ny],
+            "socket_count": nx * ny,
+            "socket_diameter_mm": round(socket_d, 2),
+            "headroom_mm": round(headroom, 2),
             "volume_cm3": round(result.volume() / 1000, 1),
         },
     )

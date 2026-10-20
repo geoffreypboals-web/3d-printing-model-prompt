@@ -810,7 +810,7 @@ class ToolInsertResponse(ToolInsertResult):
     model_id: str
 
 
-# --- Rule-based templates (gridfinity.py, gear.py, lithophane.py, qr_tag.py) ---
+# --- Rule-based templates (gridfinity.py, gear.py, lithophane.py, qr_tag.py, terrain.py) ---
 # See docs/print-tools-plan.md item 4.
 
 
@@ -851,6 +851,41 @@ class GridfinityBinRequest(BaseModel):
     stacking_lip: bool = True
     label_tab: bool = False
     magnet_holes: bool = False
+
+
+class MinisBinRequest(BaseModel):
+    """POST /templates/minis-bin request body: a Gridfinity bin with a socket per miniature base."""
+
+    units_x: int = Field(2, ge=1, le=8, description="Width in 42 mm grid units.")
+    units_y: int = Field(2, ge=1, le=8, description="Depth in 42 mm grid units.")
+    height_units: int = Field(8, ge=3, le=20, description="Body height in 7 mm units; set it from the tallest figure.")
+    base_diameter_mm: float = Field(25.0, ge=10, le=160, description="Round base: 25, 28, 32, 40, 50, 60 ...")
+    base_clearance_mm: float = Field(0.6, ge=0, le=3, description="Added to the base so it drops in.")
+    socket_depth_mm: float = Field(3.5, ge=1, le=10, description="How deep each base sits.")
+    socket_gap_mm: float = Field(1.6, ge=0.8, le=20, description="Solid floor between two sockets.")
+    wall_mm: float = Field(1.2, ge=0.8, le=5)
+    magnet_diameter_mm: float = Field(0.0, ge=0, le=30, description="Magnet hole under each socket; 0 = none.")
+    magnet_depth_mm: float = Field(2.2, ge=0.5, le=6)
+    stacking_lip: bool = True
+
+
+class TerrainRequest(BaseModel):
+    """POST /templates/terrain request body: one tabletop terrain tile from a seeded height field."""
+
+    style: Literal["hills", "ridges", "craters", "mesa"] = "hills"
+    width_mm: float = Field(152.4, ge=30, le=400, description="152.4 = 6 in, 304.8 = 12 in.")
+    depth_mm: float = Field(152.4, ge=30, le=400)
+    base_mm: float = Field(4.0, ge=1.5, le=20, description="Solid slab under the terrain; also the edge height.")
+    max_height_mm: float = Field(25.0, ge=1, le=150, description="Highest point above the base.")
+    feature_mm: float = Field(50.0, ge=10, le=300, description="Rough size of one hill or valley.")
+    roughness: float = Field(0.45, ge=0.2, le=0.8, description="0.3 smooth .. 0.7 rocky.")
+    terrace_mm: float = Field(0.0, ge=0, le=50, description="Step the surface into flat levels this tall; 0 = smooth.")
+    edge_fade_mm: float = Field(12.0, ge=0, le=100, description="Ease down to the base near the edges so tiles join.")
+    resolution_mm: float = Field(1.5, ge=0.5, le=5, description="Height-field grid spacing.")
+    seed: int = Field(1, ge=0, le=2**31 - 1, description="Same seed + settings = same tile.")
+    magnet_holes: bool = False
+    magnet_diameter_mm: float = Field(6.2, ge=2, le=20)
+    magnet_depth_mm: float = Field(2.2, ge=0.5, le=10)
 
 
 class GearRequest(BaseModel):

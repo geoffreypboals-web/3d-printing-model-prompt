@@ -6,6 +6,16 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ## [Unreleased]
 
+### Added (miniatures bin and terrain tiles, 2026-10-19)
+
+- `gridfinity.make_minis_bin` and `POST /templates/minis-bin`: a Gridfinity
+  bin with one round socket per miniature base and optional magnet holes
+  under them; *Minis bin* tab on the templates page.
+- `terrain.py` and `POST /templates/terrain`: seeded terrain tiles (hills,
+  ridges, craters, mesas) with optional terraces, edges eased to the base
+  height so tiles join, and corner magnet holes; *Terrain* tab. The report
+  gives the share of the tile flat enough for a miniature.
+
 ### Added (multi-colour 3MF, 2026-10-18)
 
 - `threemf.py`, `POST /models/{model_id}/export-3mf`,

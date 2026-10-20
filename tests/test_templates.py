@@ -27,7 +27,7 @@ import pytest
 import trimesh
 from fastapi.testclient import TestClient
 
-from threedprompt import gear, geometry, gridfinity, lithophane, qr_tag, storage
+from threedprompt import gear, geometry, gridfinity, lithophane, qr_tag, storage, terrain
 from threedprompt.geometry import TemplateError
 from threedprompt.main import app
 
@@ -242,6 +242,8 @@ def test_template_api_routes() -> None:
     for route, body in [
         ("/templates/gridfinity-bin", {"units_x": 1, "units_y": 1, "height_units": 3}),
         ("/templates/gear", {"teeth": 16, "mate_teeth": 24}),
+        ("/templates/minis-bin", {"units_x": 1, "units_y": 1, "base_diameter_mm": 32}),
+        ("/templates/terrain", {"width_mm": 60, "depth_mm": 60, "resolution_mm": 2}),
         ("/templates/qr-tag", {"kind": "wifi", "ssid": "Shop", "password": "example-pass"}),
     ]:
         resp = client.post(route, json=body)
@@ -256,6 +258,90 @@ def test_template_api_routes() -> None:
     )
     assert resp.status_code == 200, resp.text
     assert client.post("/templates/gear", json={"teeth": 3}).status_code == 422
+    too_big = {"units_x": 1, "units_y": 1, "base_diameter_mm": 60}
+    assert client.post("/templates/minis-bin", json=too_big).status_code == 422
+    assert client.post("/templates/terrain", json={"style": "volcano"}).status_code == 422
     assert client.post("/templates/qr-tag", json={"text": ""}).status_code == 422
     bad = client.post("/templates/lithophane", files={"file": ("x.png", b"no", "image/png")})
     assert bad.status_code == 422
+
+
+_MINIS = {
+    "units_x": 2,
+    "units_y": 2,
+    "height_units": 8,
+    "base_diameter_mm": 25.0,
+    "base_clearance_mm": 0.6,
+    "socket_depth_mm": 3.5,
+    "socket_gap_mm": 1.6,
+    "wall_mm": 1.2,
+    "magnet_diameter_mm": 5.2,
+    "magnet_depth_mm": 2.2,
+    "stacking_lip": True,
+}
+
+
+def test_minis_bin_sockets(tmp_path) -> None:
+    """2 x 2 units hold 3 x 3 sockets of 25.6 mm with 5.2 mm magnet holes under them; one closed solid."""
+    result = gridfinity.make_minis_bin(tmp_path, **_MINIS)
+    assert result.report["sockets"] == [3, 3]
+    assert result.parts[0].size_mm == pytest.approx([83.5, 83.5, 56 + 4.75], abs=0.02)
+    mesh = _mesh(tmp_path / gridfinity.MINIS_BIN_FILENAME)
+    assert mesh.is_watertight and mesh.body_count == 1
+    # Feet 4.75 + 0.8 floor + 2.2 magnet = socket bottom at 7.75; slice inside the sockets and the magnet holes.
+    socket_z, magnet_z = 7.75 + 1.75, 7.75 - 1.1
+
+    def holes(z: float, d: float) -> int:
+        loops = mesh.section(plane_origin=[0, 0, z], plane_normal=[0, 0, 1]).discrete
+        return sum(1 for loop in loops if abs(np.ptp(loop[:, 0]) - d) < 0.3 and abs(np.ptp(loop[:, 1]) - d) < 0.3)
+
+    assert holes(socket_z, 25.6) == 9 and holes(magnet_z, 5.2) == 9
+    with pytest.raises(TemplateError):
+        gridfinity.make_minis_bin(tmp_path, **{**_MINIS, "units_x": 1, "base_diameter_mm": 50})
+
+
+_TERRAIN = {
+    "style": "hills",
+    "width_mm": 100.0,
+    "depth_mm": 80.0,
+    "base_mm": 4.0,
+    "max_height_mm": 20.0,
+    "feature_mm": 40.0,
+    "roughness": 0.45,
+    "terrace_mm": 0.0,
+    "edge_fade_mm": 10.0,
+    "resolution_mm": 2.0,
+    "seed": 3,
+    "magnet_holes": True,
+    "magnet_diameter_mm": 6.2,
+    "magnet_depth_mm": 2.2,
+}
+
+
+@pytest.mark.parametrize("style", ["hills", "ridges", "craters", "mesa"])
+def test_terrain_tile_is_a_joinable_solid(tmp_path, style) -> None:
+    """Every style is one closed solid of the asked size, with every edge at the base height so tiles join."""
+    result = terrain.make_terrain(tmp_path, **{**_TERRAIN, "style": style})
+    mesh = _mesh(tmp_path / terrain.TERRAIN_FILENAME)
+    assert mesh.is_watertight and mesh.body_count == 1
+    assert result.parts[0].size_mm[:2] == pytest.approx([100, 80], abs=0.01)
+    assert 4 < result.report["highest_mm"] <= 24.01
+    edge = mesh.vertices[(mesh.vertices[:, 0] < 0.01) | (mesh.vertices[:, 1] > 79.99)]
+    assert edge[:, 2].max() == pytest.approx(4.0, abs=0.01)
+
+
+def test_terrain_seed_terraces_and_magnets(tmp_path) -> None:
+    """Same seed = same tile, another seed differs; terraces only leave whole steps; magnets can't go through."""
+    field = {"style": "hills", "nx": 40, "ny": 30, "width_mm": 100, "depth_mm": 80, "roughness": 0.45, "feature_mm": 40}
+    a, b, c = (terrain.height_field(**field, seed=s) for s in (3, 3, 4))
+    assert np.array_equal(a, b) and not np.allclose(a, c)
+    terrain.make_terrain(tmp_path, **{**_TERRAIN, "terrace_mm": 5.0, "magnet_holes": False})
+    z = np.unique(np.round(_mesh(tmp_path / terrain.TERRAIN_FILENAME).vertices[:, 2], 3))
+    assert set(z) <= {0.0, 4.0, 9.0, 14.0, 19.0, 24.0}
+    smooth = terrain.make_terrain(tmp_path, **_TERRAIN)
+    stepped = terrain.make_terrain(tmp_path, **{**_TERRAIN, "terrace_mm": 5.0})
+    assert stepped.report["standable_percent"] > smooth.report["standable_percent"]
+    with pytest.raises(TemplateError):
+        terrain.make_terrain(tmp_path, **{**_TERRAIN, "base_mm": 2.0, "magnet_depth_mm": 2.2})
+    with pytest.raises(TemplateError):
+        terrain.make_terrain(tmp_path, **{**_TERRAIN, "style": "volcano"})

@@ -2,12 +2,14 @@
 Project: 3D Printing Model Prompt
 File: /home/user/3d-printing-model-prompt/src/threedprompt/static/templates.html
 Description: GUI + three.js viewer for the rule-based templates
-    (gridfinity.py, gear.py, lithophane.py, qr_tag.py), linked from
+    (gridfinity.py incl. the miniatures bin, terrain.py, gear.py,
+    lithophane.py, qr_tag.py), linked from
     index.html. One tab per template: fill in the settings, build, see
     every part in the 3D view (each in its own colour), read the report
     (sizes, gear mesh check) and download the STLs - or one multi-colour
     3MF with a filament slot per part (AMS / CANVAS). No LLM involved.
 Inputs: User interaction; calls POST /templates/gridfinity-bin,
+    /templates/minis-bin, /templates/terrain,
     /templates/gear, /templates/lithophane (multipart), /templates/qr-tag,
     GET /models/{id}/parts/{file} and POST /models/{id}/export-3mf on this
     origin.
@@ -81,10 +83,12 @@ Troubleshooting:
 <div id="sidebar">
   <div>
     <h1>Print Templates <a href="/">&larr; back</a></h1>
-    <p class="hint" style="margin-top:0">Parametric parts from rules, no AI: Gridfinity bins, gears, lithophanes and QR tags.</p>
+    <p class="hint" style="margin-top:0">Parametric parts from rules, no AI: Gridfinity bins, miniature storage, terrain tiles, gears, lithophanes and QR tags.</p>
   </div>
   <div class="tabs" role="tablist">
     <button type="button" role="tab" data-tab="bin" aria-selected="true">Gridfinity bin</button>
+    <button type="button" role="tab" data-tab="minis" aria-selected="false">Minis bin</button>
+    <button type="button" role="tab" data-tab="terrain" aria-selected="false">Terrain</button>
     <button type="button" role="tab" data-tab="gear" aria-selected="false">Gears</button>
     <button type="button" role="tab" data-tab="litho" aria-selected="false">Lithophane</button>
     <button type="button" role="tab" data-tab="qr" aria-selected="false">QR tag</button>
@@ -106,6 +110,47 @@ Troubleshooting:
       <label class="check"><input data-k="magnet_holes" type="checkbox"> Magnet holes</label>
     </div>
     <p class="hint">Bins are 0.5 mm smaller than the grid so they drop into a baseplate. Magnet holes take 6 x 2 mm magnets.</p>
+  </fieldset>
+
+  <fieldset data-panel="minis" class="hidden">
+    <legend>Miniatures bin (Gridfinity)</legend>
+    <div class="grid">
+      <label>Width (42 mm units)<input data-k="units_x" type="number" value="2" min="1" max="8"></label>
+      <label>Depth (42 mm units)<input data-k="units_y" type="number" value="2" min="1" max="8"></label>
+      <label>Height (7 mm units)<input data-k="height_units" type="number" value="8" min="3" max="20"></label>
+      <label>Base diameter (mm)<select data-k="base_diameter_mm"><option>25</option><option>28</option><option selected>32</option><option>40</option><option>50</option><option>60</option></select></label>
+      <label>Base clearance (mm)<input data-k="base_clearance_mm" type="number" value="0.6" min="0" max="3" step="0.1"></label>
+      <label>Socket depth (mm)<input data-k="socket_depth_mm" type="number" value="3.5" min="1" max="10" step="0.5"></label>
+      <label>Gap between sockets (mm)<input data-k="socket_gap_mm" type="number" value="1.6" min="0.8" max="20" step="0.2"></label>
+      <label>Wall (mm)<input data-k="wall_mm" type="number" value="1.2" min="0.8" max="5" step="0.1"></label>
+      <label>Magnet hole (mm, 0 = none)<input data-k="magnet_diameter_mm" type="number" value="0" min="0" max="30" step="0.1"></label>
+      <label>Magnet depth (mm)<input data-k="magnet_depth_mm" type="number" value="2.2" min="0.5" max="6" step="0.1"></label>
+      <label class="check"><input data-k="stacking_lip" type="checkbox" checked> Stacking lip</label>
+    </div>
+    <p class="hint">One socket per round base, so figures can't slide into each other. Pick the height from your
+      tallest figure (8 units leaves about 45 mm). A 5 x 2 mm magnet takes a 5.2 mm hole.</p>
+  </fieldset>
+
+  <fieldset data-panel="terrain" class="hidden">
+    <legend>Terrain tile</legend>
+    <div class="grid">
+      <label>Style<select data-k="style"><option value="hills">Rolling hills</option><option value="ridges">Rocky ridges</option><option value="craters">Craters</option><option value="mesa">Mesas</option></select></label>
+      <label>Seed<input data-k="seed" type="number" value="1" min="0" step="1"></label>
+      <label>Width (mm)<input data-k="width_mm" type="number" value="152.4" min="30" max="400" step="0.1"></label>
+      <label>Depth (mm)<input data-k="depth_mm" type="number" value="152.4" min="30" max="400" step="0.1"></label>
+      <label>Max height (mm)<input data-k="max_height_mm" type="number" value="25" min="1" max="150"></label>
+      <label>Base (mm)<input data-k="base_mm" type="number" value="4" min="1.5" max="20" step="0.5"></label>
+      <label>Feature size (mm)<input data-k="feature_mm" type="number" value="50" min="10" max="300"></label>
+      <label>Roughness<input data-k="roughness" type="number" value="0.45" min="0.2" max="0.8" step="0.05"></label>
+      <label>Terraces (mm, 0 = smooth)<input data-k="terrace_mm" type="number" value="0" min="0" max="50" step="0.5"></label>
+      <label>Edge fade (mm)<input data-k="edge_fade_mm" type="number" value="12" min="0" max="100"></label>
+      <label>Resolution (mm)<input data-k="resolution_mm" type="number" value="1.5" min="0.5" max="5" step="0.5"></label>
+      <label class="check"><input data-k="magnet_holes" type="checkbox"> Magnet holes</label>
+      <label>Magnet hole (mm)<input data-k="magnet_diameter_mm" type="number" value="6.2" min="2" max="20" step="0.1"></label>
+      <label>Magnet depth (mm)<input data-k="magnet_depth_mm" type="number" value="2.2" min="0.5" max="10" step="0.1"></label>
+    </div>
+    <p class="hint">152.4 mm = 6 in. Edges always end at the base height, so tiles from any seed join. Terraces
+      give flat steps for miniatures to stand on; the report shows how much of the tile is flat enough.</p>
   </fieldset>
 
   <fieldset data-panel="gear" class="hidden">
@@ -189,7 +234,10 @@ import { createViewer, errorText, loadStl, postJson } from "/viewer-kit.js";
 const $ = (id) => document.getElementById(id);
 const viewer = createViewer($("viewport"));
 const COLORS = [0x4a78c8, 0xf0902a, 0x2fae5c, 0xb04ad8, 0xe5484d];
-const ROUTES = { bin: "/templates/gridfinity-bin", gear: "/templates/gear", litho: "/templates/lithophane", qr: "/templates/qr-tag" };
+const ROUTES = {
+  bin: "/templates/gridfinity-bin", minis: "/templates/minis-bin", terrain: "/templates/terrain",
+  gear: "/templates/gear", litho: "/templates/lithophane", qr: "/templates/qr-tag",
+};
 let tab = "bin";
 let meshes = [];
 let lastModelId = null;
