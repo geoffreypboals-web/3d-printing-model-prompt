@@ -1,0 +1,372 @@
+<!--
+Project: 3D Printing Model Prompt
+File: /home/user/3d-printing-model-prompt/src/threedprompt/static/templates.html
+Description: GUI + three.js viewer for the rule-based templates
+    (gridfinity.py incl. the miniatures bin, terrain.py, gear.py,
+    lithophane.py, qr_tag.py), linked from
+    index.html. One tab per template: fill in the settings, build, see
+    every part in the 3D view (each in its own colour), read the report
+    (sizes, gear mesh check) and download the STLs - or one multi-colour
+    3MF with a filament slot per part (AMS / CANVAS). No LLM involved.
+Inputs: User interaction; calls POST /templates/gridfinity-bin,
+    /templates/minis-bin, /templates/terrain,
+    /templates/gear, /templates/lithophane (multipart), /templates/qr-tag,
+    GET /models/{id}/parts/{file} and POST /models/{id}/export-3mf on this
+    origin.
+Outputs: None (a browser page) - files live under the returned model_id.
+Troubleshooting:
+    - Lithophane "too fine": raise mm per pixel or reduce the width.
+    - QR tag with Wi-Fi: the password is inside the printed code (that is
+      the point), but the server doesn't store it with the model.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Print Templates</title>
+<style>
+  :root { --bg: #f7f7f8; --panel-bg: #ffffff; --border: #e2e2e6; --text: #1c1c1f; --text-dim: #6b6b73;
+          --accent: #3d6bff; --error: #e5484d; --ok: #2fae5c; --warn: #b7791f; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #16161a; --panel-bg: #1f1f24; --border: #313138; --text: #ececef;
+                                      --text-dim: #9a9aa2; --warn: #e0a640; }
+  }
+  :root[data-theme="dark"] { --bg: #16161a; --panel-bg: #1f1f24; --border: #313138; --text: #ececef;
+                             --text-dim: #9a9aa2; --warn: #e0a640; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden;
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  #viewport { flex: 1; position: relative; min-width: 0; }
+  #viewport canvas { display: block; width: 100%; height: 100%; }
+  #sidebar { width: 380px; flex-shrink: 0; background: var(--panel-bg); border-left: 1px solid var(--border);
+             padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+  @media (max-width: 800px) {
+    body { flex-direction: column; height: auto; overflow: auto; }
+    #viewport { height: 55vh; flex: none; }
+    #sidebar { width: 100%; border-left: none; border-top: 1px solid var(--border); }
+  }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  h1 a { color: var(--text-dim); font-size: 12px; font-weight: normal; margin-left: 8px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); margin: 0 0 8px; }
+  .tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+  .tabs button { margin: 0; background: var(--bg); color: var(--text); padding: 6px 10px; font-size: 12.5px; }
+  .tabs button[aria-selected="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+  fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px 12px; margin: 0; }
+  legend { font-size: 12px; font-weight: 600; padding: 0 4px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+  .grid label, .field label { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--text-dim); }
+  .grid label.check { flex-direction: row; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text); }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .wide { grid-column: 1 / -1; }
+  input[type="number"], input[type="text"], input[type="password"], select { font: inherit; font-size: 13px; padding: 5px 7px;
+         border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); width: 100%; }
+  input[type="file"] { font-size: 12px; max-width: 100%; }
+  .hint { font-size: 11.5px; color: var(--text-dim); margin: 6px 0 0; }
+  button { font-size: 13px; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border);
+           background: var(--accent); color: white; cursor: pointer; margin-top: 10px; }
+  button:disabled { opacity: 0.45; cursor: default; }
+  #status { font-size: 12px; color: var(--text-dim); white-space: pre-wrap; }
+  #status.error { color: var(--error); }
+  #status.ok { color: var(--ok); }
+  #notes { font-size: 12px; color: var(--warn); margin: 0; padding-left: 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  td, th { text-align: left; padding: 4px 4px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  td a { color: var(--accent); }
+  #report { font-size: 12px; margin: 0; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; overflow-x: auto; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="viewport"></div>
+<div id="sidebar">
+  <div>
+    <h1>Print Templates <a href="/">&larr; back</a></h1>
+    <p class="hint" style="margin-top:0">Parametric parts from rules, no AI: Gridfinity bins, miniature storage, terrain tiles, gears, lithophanes and QR tags.</p>
+  </div>
+  <div class="tabs" role="tablist">
+    <button type="button" role="tab" data-tab="bin" aria-selected="true">Gridfinity bin</button>
+    <button type="button" role="tab" data-tab="minis" aria-selected="false">Minis bin</button>
+    <button type="button" role="tab" data-tab="terrain" aria-selected="false">Terrain</button>
+    <button type="button" role="tab" data-tab="gear" aria-selected="false">Gears</button>
+    <button type="button" role="tab" data-tab="litho" aria-selected="false">Lithophane</button>
+    <button type="button" role="tab" data-tab="qr" aria-selected="false">QR tag</button>
+  </div>
+
+  <fieldset data-panel="bin">
+    <legend>Gridfinity bin</legend>
+    <div class="grid">
+      <label>Width (42 mm units)<input data-k="units_x" type="number" value="2" min="1" max="8"></label>
+      <label>Depth (42 mm units)<input data-k="units_y" type="number" value="1" min="1" max="8"></label>
+      <label>Height (7 mm units)<input data-k="height_units" type="number" value="6" min="2" max="20"></label>
+      <label>Floor (mm)<input data-k="floor_mm" type="number" value="1.2" min="0.6" max="10" step="0.2"></label>
+      <label>Compartments across<input data-k="compartments_x" type="number" value="1" min="1" max="10"></label>
+      <label>Compartments deep<input data-k="compartments_y" type="number" value="1" min="1" max="10"></label>
+      <label>Wall (mm)<input data-k="wall_mm" type="number" value="1.2" min="0.8" max="5" step="0.1"></label>
+      <label>Divider (mm)<input data-k="divider_mm" type="number" value="1.2" min="0.8" max="5" step="0.1"></label>
+      <label class="check"><input data-k="stacking_lip" type="checkbox" checked> Stacking lip</label>
+      <label class="check"><input data-k="label_tab" type="checkbox"> Label tabs</label>
+      <label class="check"><input data-k="magnet_holes" type="checkbox"> Magnet holes</label>
+    </div>
+    <p class="hint">Bins are 0.5 mm smaller than the grid so they drop into a baseplate. Magnet holes take 6 x 2 mm magnets.</p>
+  </fieldset>
+
+  <fieldset data-panel="minis" class="hidden">
+    <legend>Miniatures bin (Gridfinity)</legend>
+    <div class="grid">
+      <label>Width (42 mm units)<input data-k="units_x" type="number" value="2" min="1" max="8"></label>
+      <label>Depth (42 mm units)<input data-k="units_y" type="number" value="2" min="1" max="8"></label>
+      <label>Height (7 mm units)<input data-k="height_units" type="number" value="8" min="3" max="20"></label>
+      <label>Base diameter (mm)<select data-k="base_diameter_mm"><option>25</option><option>28</option><option selected>32</option><option>40</option><option>50</option><option>60</option></select></label>
+      <label>Base clearance (mm)<input data-k="base_clearance_mm" type="number" value="0.6" min="0" max="3" step="0.1"></label>
+      <label>Socket depth (mm)<input data-k="socket_depth_mm" type="number" value="3.5" min="1" max="10" step="0.5"></label>
+      <label>Gap between sockets (mm)<input data-k="socket_gap_mm" type="number" value="1.6" min="0.8" max="20" step="0.2"></label>
+      <label>Wall (mm)<input data-k="wall_mm" type="number" value="1.2" min="0.8" max="5" step="0.1"></label>
+      <label>Magnet hole (mm, 0 = none)<input data-k="magnet_diameter_mm" type="number" value="0" min="0" max="30" step="0.1"></label>
+      <label>Magnet depth (mm)<input data-k="magnet_depth_mm" type="number" value="2.2" min="0.5" max="6" step="0.1"></label>
+      <label class="check"><input data-k="stacking_lip" type="checkbox" checked> Stacking lip</label>
+    </div>
+    <p class="hint">One socket per round base, so figures can't slide into each other. Pick the height from your
+      tallest figure (8 units leaves about 45 mm). A 5 x 2 mm magnet takes a 5.2 mm hole.</p>
+  </fieldset>
+
+  <fieldset data-panel="terrain" class="hidden">
+    <legend>Terrain tile</legend>
+    <div class="grid">
+      <label>Style<select data-k="style"><option value="hills">Rolling hills</option><option value="ridges">Rocky ridges</option><option value="craters">Craters</option><option value="mesa">Mesas</option></select></label>
+      <label>Seed<input data-k="seed" type="number" value="1" min="0" step="1"></label>
+      <label>Width (mm)<input data-k="width_mm" type="number" value="152.4" min="30" max="400" step="0.1"></label>
+      <label>Depth (mm)<input data-k="depth_mm" type="number" value="152.4" min="30" max="400" step="0.1"></label>
+      <label>Max height (mm)<input data-k="max_height_mm" type="number" value="25" min="1" max="150"></label>
+      <label>Base (mm)<input data-k="base_mm" type="number" value="4" min="1.5" max="20" step="0.5"></label>
+      <label>Feature size (mm)<input data-k="feature_mm" type="number" value="50" min="10" max="300"></label>
+      <label>Roughness<input data-k="roughness" type="number" value="0.45" min="0.2" max="0.8" step="0.05"></label>
+      <label>Terraces (mm, 0 = smooth)<input data-k="terrace_mm" type="number" value="0" min="0" max="50" step="0.5"></label>
+      <label>Edge fade (mm)<input data-k="edge_fade_mm" type="number" value="12" min="0" max="100"></label>
+      <label>Resolution (mm)<input data-k="resolution_mm" type="number" value="1.5" min="0.5" max="5" step="0.5"></label>
+      <label class="check"><input data-k="magnet_holes" type="checkbox"> Magnet holes</label>
+      <label>Magnet hole (mm)<input data-k="magnet_diameter_mm" type="number" value="6.2" min="2" max="20" step="0.1"></label>
+      <label>Magnet depth (mm)<input data-k="magnet_depth_mm" type="number" value="2.2" min="0.5" max="10" step="0.1"></label>
+    </div>
+    <p class="hint">152.4 mm = 6 in. Edges always end at the base height, so tiles from any seed join. Terraces
+      give flat steps for miniatures to stand on; the report shows how much of the tile is flat enough.</p>
+  </fieldset>
+
+  <fieldset data-panel="gear" class="hidden">
+    <legend>Involute gears</legend>
+    <div class="grid">
+      <label>Module (mm)<input data-k="module" type="number" value="2" min="0.5" max="10" step="0.25"></label>
+      <label>Teeth<input data-k="teeth" type="number" value="20" min="8" max="200"></label>
+      <label>Pressure angle (&deg;)<select data-k="pressure_angle_deg"><option>14.5</option><option selected>20</option><option>25</option></select></label>
+      <label>Backlash (mm)<input data-k="backlash_mm" type="number" value="0.15" min="0" max="1" step="0.05"></label>
+      <label>Thickness (mm)<input data-k="face_width_mm" type="number" value="8" min="1" max="100"></label>
+      <label>Helix angle (&deg;, 0 = spur)<input data-k="helix_angle_deg" type="number" value="0" min="-45" max="45" step="5"></label>
+      <label>Bore<select data-k="bore"><option value="round">Round</option><option value="d">D shaft</option><option value="hex">Hex</option><option value="none">None</option></select></label>
+      <label>Bore size (mm)<input data-k="bore_diameter_mm" type="number" value="5" min="0" max="100" step="0.1"></label>
+      <label>Mating gear teeth<input data-k="mate_teeth" type="number" placeholder="none" min="8" max="200"></label>
+      <label>Rack teeth<input data-k="rack_teeth" type="number" placeholder="none" min="2" max="200"></label>
+    </div>
+    <p class="hint">Gears only mesh with the same module and pressure angle. The mate and rack are placed in mesh.</p>
+  </fieldset>
+
+  <fieldset data-panel="litho" class="hidden">
+    <legend>Lithophane</legend>
+    <div class="field" style="margin-top:0"><label>Image (JPEG/PNG)<input id="lithoFile" type="file" accept="image/*"></label></div>
+    <div class="grid" style="margin-top:8px">
+      <label>Shape<select data-k="shape"><option value="flat">Flat panel</option><option value="curved">Curved panel</option><option value="cylinder">Cylinder (lamp)</option></select></label>
+      <label>Width / circumference (mm)<input data-k="width_mm" type="number" value="100" min="20" max="400"></label>
+      <label>Thinnest, white (mm)<input data-k="min_thickness_mm" type="number" value="0.8" min="0.4" max="5" step="0.1"></label>
+      <label>Thickest, black (mm)<input data-k="max_thickness_mm" type="number" value="3" min="0.8" max="10" step="0.1"></label>
+      <label>mm per pixel<input data-k="resolution_mm" type="number" value="0.25" min="0.1" max="2" step="0.05"></label>
+      <label>Frame (mm)<input data-k="frame_mm" type="number" value="3" min="0" max="30" step="0.5"></label>
+      <label>Curve (&deg;)<input data-k="curve_deg" type="number" value="120" min="10" max="300" step="10"></label>
+    </div>
+    <p class="hint">Print upright at 100 % infill. Darker = thicker, so it looks right when lit from behind.</p>
+  </fieldset>
+
+  <fieldset data-panel="qr" class="hidden">
+    <legend>QR tag</legend>
+    <div class="grid">
+      <label class="wide">Content<select data-k="kind" id="qrKind"><option value="text">Text or URL</option><option value="wifi">Wi-Fi login</option></select></label>
+      <label class="wide" id="qrText">Text or URL<input data-k="text" type="text" value="https://example.com"></label>
+      <label class="hidden" id="qrSsid">Network (SSID)<input data-k="ssid" type="text"></label>
+      <label class="hidden" id="qrPass">Password<input data-k="password" type="password" autocomplete="off"></label>
+      <label class="hidden" id="qrSec">Security<select data-k="security"><option>WPA</option><option>WEP</option><option value="nopass">None</option></select></label>
+      <label>Error correction<select data-k="error_correction"><option value="l">Low</option><option value="m" selected>Medium</option><option value="q">Quartile</option><option value="h">High</option></select></label>
+      <label>Square size (mm)<input data-k="module_mm" type="number" value="2" min="0.8" max="10" step="0.1"></label>
+      <label>Quiet zone (squares)<input data-k="quiet_zone" type="number" value="2" min="1" max="6"></label>
+      <label>Plate (mm)<input data-k="plate_mm" type="number" value="3" min="1" max="10" step="0.5"></label>
+      <label>Code height (mm)<input data-k="code_height_mm" type="number" value="1" min="0.2" max="5" step="0.2"></label>
+      <label>Corner radius (mm)<input data-k="corner_radius_mm" type="number" value="3" min="0" max="20"></label>
+      <label class="check"><input data-k="keyring_hole" type="checkbox" checked> Key-ring hole</label>
+      <label class="check"><input data-k="nfc_pocket" type="checkbox"> NFC pocket</label>
+    </div>
+    <p class="hint">Print the code in a dark colour on a light plate (two colours, or a filament change at the code's first layer).</p>
+  </fieldset>
+
+  <button id="go" type="button">Build</button>
+  <div id="status" role="status"></div>
+  <ul id="notes"></ul>
+  <div id="results" class="hidden">
+    <h2>Parts</h2>
+    <table><thead><tr><th>File</th><th>Size (mm)</th><th>How to print</th></tr></thead><tbody id="rows"></tbody></table>
+    <h2 style="margin-top:12px">Multi-colour 3MF</h2>
+    <table><thead><tr><th>Part</th><th>Colour</th><th>Slot</th></tr></thead><tbody id="mcRows"></tbody></table>
+    <div class="grid" style="margin-top:8px">
+      <label>Slicer<select id="mcSlicer"><option value="orca">Bambu Studio / OrcaSlicer / Elegoo</option><option value="prusa">PrusaSlicer</option></select></label>
+      <label class="check"><input id="mcAssembled" type="checkbox" checked> Keep parts together</label>
+    </div>
+    <button id="mcGo" type="button">Download 3MF</button>
+    <p class="hint">Open the file (don't import it into an existing project) so the slicer keeps each part's
+      filament. Slots are your AMS / CANVAS filament positions.</p>
+    <h2 style="margin-top:12px">Report</h2>
+    <pre id="report"></pre>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "/vendor/three/build/three.module.min.js", "three/addons/": "/vendor/three/examples/jsm/" } }
+</script>
+<script type="module">
+import { createViewer, errorText, loadStl, postJson } from "/viewer-kit.js";
+
+const $ = (id) => document.getElementById(id);
+const viewer = createViewer($("viewport"));
+const COLORS = [0x4a78c8, 0xf0902a, 0x2fae5c, 0xb04ad8, 0xe5484d];
+const ROUTES = {
+  bin: "/templates/gridfinity-bin", minis: "/templates/minis-bin", terrain: "/templates/terrain",
+  gear: "/templates/gear", litho: "/templates/lithophane", qr: "/templates/qr-tag",
+};
+let tab = "bin";
+let meshes = [];
+let lastModelId = null;
+const DEFAULT_COLOURS = { "qr_plate.stl": ["#f2f2f2", 1], "qr_code.stl": ["#1c1c1f", 2] };
+const PALETTE = ["#f2f2f2", "#1c1c1f", "#e5484d", "#3d6bff", "#2fae5c", "#f0902a"];
+
+// One row per STL part: a colour and a filament slot for the 3MF export.
+function fillColourRows(parts) {
+  $("mcRows").innerHTML = "";
+  parts.filter((p) => p.filename !== "qr_tag.stl").forEach((part, i) => {
+    const [color, slot] = DEFAULT_COLOURS[part.filename] || [PALETTE[i % PALETTE.length], i + 1];
+    const tr = document.createElement("tr");
+    tr.dataset.filename = part.filename;
+    tr.innerHTML = `<td></td><td><input type="color" value="${color}" aria-label="colour"></td>` +
+      `<td><input type="number" min="1" max="16" value="${Math.min(slot, 16)}" style="width:60px" aria-label="filament slot"></td>`;
+    tr.firstChild.textContent = part.filename;
+    $("mcRows").appendChild(tr);
+  });
+}
+
+$("mcGo").addEventListener("click", async () => {
+  if (!lastModelId) return;
+  $("mcGo").disabled = true;
+  try {
+    const parts = [...$("mcRows").children].map((tr) => ({
+      filename: tr.dataset.filename,
+      color: tr.querySelector('input[type="color"]').value,
+      extruder: parseInt(tr.querySelector('input[type="number"]').value, 10) || 1,
+    }));
+    const res = await postJson(`/models/${lastModelId}/export-3mf`, { parts, assembled: $("mcAssembled").checked, slicer: $("mcSlicer").value });
+    const a = document.createElement("a");
+    a.href = res.download_url; a.download = `${lastModelId}_multicolour.3mf`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setStatus(`3MF: ${res.parts} part(s) on ${res.filaments.length} filament(s).`, "ok");
+  } catch (err) {
+    console.error(err);
+    setStatus(err.message, "error");
+  } finally {
+    $("mcGo").disabled = false;
+  }
+});
+
+// Update the status line (kind: "" | "ok" | "error").
+function setStatus(text, kind) { $("status").textContent = text; $("status").className = kind || ""; }
+
+for (const b of document.querySelectorAll("[data-tab]")) {
+  b.addEventListener("click", () => {
+    tab = b.dataset.tab;
+    for (const o of document.querySelectorAll("[data-tab]")) o.setAttribute("aria-selected", String(o === b));
+    for (const p of document.querySelectorAll("[data-panel]")) p.classList.toggle("hidden", p.dataset.panel !== tab);
+  });
+}
+$("qrKind").addEventListener("change", () => {
+  const wifi = $("qrKind").value === "wifi";
+  $("qrText").classList.toggle("hidden", wifi);
+  for (const id of ["qrSsid", "qrPass", "qrSec"]) $(id).classList.toggle("hidden", !wifi);
+});
+
+// Collect the active panel's inputs: numbers as numbers, checkboxes as booleans, blank optional numbers left out.
+function panelValues() {
+  const out = {};
+  for (const el of document.querySelectorAll(`[data-panel="${tab}"] [data-k]`)) {
+    const k = el.dataset.k;
+    if (el.type === "checkbox") out[k] = el.checked;
+    else if (el.type === "number") { if (el.value !== "") out[k] = parseFloat(el.value); }
+    else if (el.tagName === "SELECT" && !isNaN(parseFloat(el.value)) && /^[\d.]+$/.test(el.value)) out[k] = parseFloat(el.value);
+    else out[k] = el.value;
+  }
+  return out;
+}
+
+$("go").addEventListener("click", async () => {
+  $("go").disabled = true;
+  setStatus("Building...");
+  try {
+    const values = panelValues();
+    let res;
+    if (tab === "litho") {
+      const f = $("lithoFile").files[0];
+      if (!f) throw new Error("Pick an image first.");
+      const form = new FormData();
+      form.append("file", f);
+      for (const [k, v] of Object.entries(values)) form.append(k, String(v));
+      const resp = await fetch(ROUTES.litho, { method: "POST", body: form });
+      if (!resp.ok) throw new Error(await errorText(resp));
+      res = await resp.json();
+    } else {
+      res = await postJson(ROUTES[tab], values);
+    }
+    for (const m of meshes) viewer.scene.remove(m);
+    meshes = [];
+    // The QR tag's combined part duplicates the plate + code; show the two colour parts instead.
+    const shown = tab === "qr" ? res.parts.filter((p) => p.filename !== "qr_tag.stl") : res.parts;
+    let i = 0;
+    for (const part of shown) {
+      const mesh = await loadStl(part.url, part.filename === "qr_code.stl" ? 0x1c1c1f : COLORS[i++ % COLORS.length]);
+      if (part.filename === "qr_plate.stl") mesh.material.color.set(0xf2f2f2);
+      viewer.scene.add(mesh);
+      meshes.push(mesh);
+    }
+    viewer.frame(meshes);
+
+    $("rows").innerHTML = "";
+    for (const part of res.parts) {
+      const tr = document.createElement("tr");
+      const a = document.createElement("a");
+      a.href = part.url; a.download = part.filename; a.textContent = part.filename;
+      const td1 = document.createElement("td"); td1.appendChild(a);
+      const td2 = document.createElement("td"); td2.textContent = part.size_mm.map((v) => v.toFixed(1)).join(" x ");
+      const td3 = document.createElement("td"); td3.textContent = part.print_hint || "";
+      tr.append(td1, td2, td3);
+      $("rows").appendChild(tr);
+    }
+    $("report").textContent = JSON.stringify(res.report, null, 2);
+    lastModelId = res.model_id;
+    fillColourRows(res.parts);
+    $("results").classList.remove("hidden");
+    $("notes").innerHTML = "";
+    for (const n of res.notes) { const li = document.createElement("li"); li.textContent = n; $("notes").appendChild(li); }
+    setStatus(`Built ${res.parts.length} part(s).`, "ok");
+  } catch (err) {
+    console.error(err);
+    setStatus(err.message, "error");
+  } finally {
+    $("go").disabled = false;
+  }
+});
+
+window.__templatesDebug = { get meshes() { return meshes; } };
+</script>
+</body>
+</html>

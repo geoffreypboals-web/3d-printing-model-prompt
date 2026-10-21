@@ -359,6 +359,181 @@ See `docs/adr/0004-watertight-hole-detection-and-repair.md` for how the
 classification heuristic works and why it's a heuristic rather than an
 LLM/ML call.
 
+## Spiral wand & spinning figurines
+
+Makes a gravity "spinner" toy: a long twisted wand, plus **riders** -
+figurines with a matching twisted bore through them. Thread a rider onto
+the wand, hold it cap-up, let go, and the rider screws itself down the
+spiral, spinning as it falls, until it lands on the handle's stop flange.
+
+Open `http://localhost:8000/spiral-wand.html` for the GUI:
+
+- **Wand**: total length (or the spiral length directly), handle length
+  and diameter, the **handle distance** (the plain "rest gap" between the
+  handle stop and the spiral, where a rider lands and spins freely - set
+  it at least as tall as your rider), and the **end cap**: dome, disc,
+  cone, none, or your own model file scaled onto the tip. The cap is a
+  separate part on a one-way D-peg, because it has to come off to load
+  riders. A wand taller than *Max print height* is split inside the
+  spiral into D-pegged sections, with the twist continuous across each
+  joint.
+- **Rider**: upload a figurine (STL/OBJ/PLY/GLB), **generate one from a
+  prompt** (runs the normal `/generate` pipeline first), or reuse any
+  `model_id`. Set its height and which axis of the file points up; a
+  full-height sleeve around the bore keeps thin parts from breaking open,
+  and an optional round base helps figures that don't stand on their own.
+- **Viewer**: shows the assembled wand and rider in 3D. Drag the slider,
+  or press Play, to watch the rider spin down the spiral. Every part
+  downloads as STL, or all of them as one zip.
+
+The rod settings (diameter, lobes, lobe depth, pitch, spin direction,
+clearance) are shared: a rider only fits a wand built with the same
+values. The GUI warns if they differ. The default `clearance_mm` (0.45)
+and `pitch_mm` (120) are starting guesses, not print-tested values - print
+a short wand and one rider first and adjust.
+
+This needs no LLM, OpenSCAD, Blender or FreeCAD: `spiral_wand.py` builds
+everything in-process with manifold3d and trimesh (see
+`docs/adr/0014-spiral-wand-manifold3d.md`). The API:
+
+1. `POST /spiral-wand` with wand + rod settings (all optional, see
+   `/docs`) -> JSON with `model_id`, `parts[]` (each with `url`,
+   `z_offset_mm` in the assembled wand and `size_mm`), `notes[]`, and a
+   zip `download_url`. Set `cap_model_id` to use an uploaded or generated
+   model as the end cap.
+2. `POST /models/{model_id}/spiral-wand/rider` with rod + rider settings
+   -> the same JSON shape, with one `rider.stl` part. `model_id` is any
+   generated model or a `/watertight/upload` upload.
+3. `GET /models/{model_id}/parts/{filename}` downloads one part;
+   `GET /models/{model_id}/spiral-wand.zip` downloads them all.
+
+Meshes that aren't closed solids are lightly repaired (merged vertices,
+small holes filled, overlapping shells unioned); anything worse is
+rejected with a 422 that points you to the watertight checker.
+
+## Split to fit the bed
+
+Open `http://localhost:8000/split.html`, pick a model (upload or
+`model_id`) and a printer preset or bed size, and press **Split**. A model
+too big for the bed is cut on the smallest grid of equal cells that each
+fit (in any upright or lying-down orientation), and every cut face gets
+connectors so the pieces line up:
+
+- **Dowel pins** (default): matching holes in both pieces, plus
+  `dowel_pin.stl` to print (the response says how many).
+- **One-way D-peg**: a D-shaped peg on one piece and a socket in the other,
+  so the joint only goes together one way. No loose pins.
+- **None**: plain cuts to glue flat.
+
+Connectors sit inside each cut's cross-section with a wall around them;
+a face too thin or small for one is listed in the notes (glue it flat).
+Pieces keep the model's coordinates, so they reassemble with no transform;
+the page shows them assembled or pulled apart, with each piece's size and
+how to lay it on the bed. API: `POST /models/{model_id}/split` (see
+`/docs`), then `GET /models/{model_id}/parts/{filename}` or
+`GET /models/{model_id}/split.zip`. Built in-process with manifold3d like
+the spiral wand; plan: `docs/print-tools-plan.md` item 1.
+
+## Overhang check
+
+The split, spiral wand and watertight pages have an **overhangs** toggle
+that paints in red every face pointing down more steeply than 45 deg from
+vertical (the split page lets you change the angle): the parts that need
+support if printed as shown. Faces lying on the bed are ignored, and each
+split piece or wand part is checked on its own bed since they print
+separately. `GET /models/{model_id}/overhangs?angle_deg=45` returns the same
+measure for any model: `overhang_area_mm2`, `total_area_mm2`,
+`overhang_fraction` and `overhang_face_count`, printed Z up as stored.
+Plan: `docs/print-tools-plan.md` item 2.
+
+## Tool insert from a photo
+
+Open `http://localhost:8000/tool-insert.html`. Lay your tools on a sheet of
+plain white paper, put a solid dark square of known size (10-30 mm; print
+one or cut it from black card) on the sheet beside them, and take a photo
+from roughly above with the whole sheet in frame. Pick the paper size and
+square size, then **Trace outlines**: the page finds the sheet, corrects
+the perspective, uses the square for scale and draws each tool's outline
+over the photo. Fix anything it got wrong: drag points, double-click an
+edge to add one, right-click to remove one, switch off shapes you don't
+want, and add round finger notches. No square? Use **Set scale** and click
+two points a known distance apart (the paper's long edge works).
+
+**Build insert** makes a tray with a pocket per tool: the outline grown by
+the clearance (snug 0.5 / normal 1 / loose 2 mm), at the depth you choose,
+with an optional stepped chamfer on the top edge. *Fitted box* is just big
+enough for the pockets plus the wall; *Gridfinity* rounds up to 42 mm grid
+units and 7 mm height units and adds the standard stepped feet (no stacking
+lip, so the insert sits flush; no magnet holes yet).
+
+API: `POST /tool-insert/trace` (multipart: `file`, `square_mm`, `paper`,
+optional `mm_per_px`) returns outlines in pixels and mm plus a JPEG preview
+of the corrected sheet; nothing is stored. `POST /tool-insert` (JSON:
+`tools[{outline_mm, notches}]` and tray settings) builds
+`tool_insert.stl` under a new `model_id`. Image processing uses OpenCV;
+geometry is manifold3d. Plan: `docs/print-tools-plan.md` item 3.
+
+## Print templates
+
+Open `http://localhost:8000/templates.html`. Six parametric parts, built by
+rules (no AI), each shown in the 3D viewer with its STLs and a report:
+
+- **Gridfinity bin:** width/depth in 42 mm units, height in 7 mm units,
+  a grid of compartments, stacking lip, 45 deg label tabs (print without
+  support) and 6.5 x 2.4 mm magnet holes in each foot. Sizes follow the
+  published Gridfinity spec (`gridfinity.py`); the lip is an approximation.
+- **Minis bin:** a Gridfinity bin for miniatures. The floor is a grid of
+  round sockets, one per base (25, 28, 32, 40, 50 or 60 mm, plus clearance),
+  so figures can't slide into each other, with an optional magnet hole under
+  each socket and the bin open above them for the figures. The report gives
+  the socket count and the headroom.
+- **Terrain tile:** a tabletop tile from a seeded height field: rolling
+  hills, rocky ridges, craters or mesas. Terraces step the surface into flat
+  levels for miniatures to stand on, and the report says how much of the
+  tile is under 15 deg. The edges always ease down to the base height, so
+  tiles from any seed join, and optional magnet holes in the bottom corners
+  hold them together. Same seed + settings = same tile (`terrain.py`).
+- **Gears:** involute spur or helical gears from module, tooth count,
+  pressure angle and backlash, with round, D or hex bores; optionally a
+  mating gear (placed in mesh, opposite helix) and a rack. The report gives
+  pitch/tip/root diameters, centre distance and contact ratio.
+- **Lithophane:** a photo becomes a height map (darker = thicker) on a
+  flat panel, a curved panel or a cylinder lamp shade, with a solid frame.
+- **QR tag:** text, a URL or Wi-Fi login as a raised QR code on a plate,
+  with key-ring hole and NFC sticker pocket. The plate and code are also
+  separate STLs for two-colour printing. A Wi-Fi password ends up in the
+  printed code (that's what it's for) but is never logged or saved in the
+  model's spec.
+
+API: `POST /templates/gridfinity-bin`, `/templates/minis-bin`, `/templates/terrain`,
+`/templates/gear`, `/templates/qr-tag`
+(JSON) and `/templates/lithophane` (multipart: `file` + settings). Each
+returns a `model_id`, part URLs, notes and a `report`. Plan:
+`docs/print-tools-plan.md` item 4.
+
+## Multi-colour 3MF
+
+Any build with several parts (a QR tag's plate and code, gears, split
+pieces, a wand and its rider) can be exported as **one 3MF with a filament
+per part**, for the Bambu AMS or the Elegoo CANVAS. On the templates page,
+pick a colour and a filament slot for each part under *Multi-colour 3MF*,
+choose the slicer and download. A QR tag defaults to a white plate (slot 1)
+and black code (slot 2).
+
+- **Bambu Studio / OrcaSlicer / Elegoo Slicer / Anycubic Slicer Next:**
+  slicer "orca". Open the file (don't import it into an existing project)
+  and each part keeps its slot.
+- **PrusaSlicer:** slicer "prusa". It reads multi-part objects
+  differently, so the same file won't serve both (see
+  `docs/adr/0015-multicolour-3mf-two-layouts.md`).
+- Untick *Keep parts together* to get each part as its own object.
+
+API: `POST /models/{model_id}/export-3mf` with
+`{"parts": [{"filename", "color", "extruder"}], "assembled", "slicer"}`
+(omit `parts` for every part, one slot each), then
+`GET /models/{model_id}/multicolour.3mf`. Plan:
+`docs/print-tools-plan.md` item 5.
+
 ## STEP conversion & solid healing
 
 Two FreeCAD-backed capabilities Blender can't provide at all:
@@ -456,6 +631,23 @@ Generator interview, so answers can be spoken instead of typed.
 | POST   | `/step/upload`                | multipart upload (`file`, `.step`/`.stp`) -> JSON w/ model_id (mesh)    |
 | POST   | `/models/{model_id}/export-step` | Converts the model's mesh to STEP -> **the STEP file**               |
 | POST   | `/models/{model_id}/repair-solid` | Heals B-rep topology via FreeCAD ShapeFix -> JSON, overwrites in place |
+| POST   | `/spiral-wand`                | Wand + rod settings (all optional) -> JSON w/ model_id, parts (URLs, assembly offsets), notes |
+| POST   | `/models/{model_id}/spiral-wand/rider` | Rod + rider settings -> JSON w/ new model_id and the rider part |
+| GET    | `/models/{model_id}/parts/{filename}` | Download one spiral wand, rider, split or tool insert STL part |
+| POST   | `/models/{model_id}/split`    | Bed size + connector settings -> JSON w/ new model_id, pieces (fit + print hint), zip URL |
+| GET    | `/models/{model_id}/overhangs` | `?angle_deg=45` -> JSON: area/fraction of the surface that needs support (Z up) |
+| GET    | `/models/{model_id}/split.zip` | Download every piece of a split (and the dowel pin) as one zip         |
+| POST   | `/tool-insert/trace`          | Photo of tools on paper (multipart) -> JSON: outlines in px and mm, corrected preview |
+| POST   | `/tool-insert`                | Tool outlines + tray settings -> JSON w/ new model_id and `tool_insert.stl` URL |
+| POST   | `/templates/gridfinity-bin`   | Grid/height units, compartments, lip, tabs, magnets -> JSON w/ model_id, part URLs, report |
+| POST   | `/templates/minis-bin`        | Grid/height units, base diameter, socket depth, magnets -> `minis_bin.stl` + socket report |
+| POST   | `/templates/terrain`          | Style, seed, size, height, terraces, edge fade, magnets -> `terrain_tile.stl` + report |
+| POST   | `/templates/gear`             | Module, teeth, pressure angle, backlash, bore (+ mate, rack) -> parts + mesh report |
+| POST   | `/templates/lithophane`       | Image (multipart) + shape/thickness/frame -> `lithophane.stl` |
+| POST   | `/templates/qr-tag`           | Text/URL or Wi-Fi -> raised QR tag + separate plate/code STLs |
+| POST   | `/models/{model_id}/export-3mf` | Parts + colour + filament slot, slicer orca/prusa -> JSON w/ download URL |
+| GET    | `/models/{model_id}/multicolour.3mf` | Download the last multi-colour 3MF exported for the model |
+| GET    | `/models/{model_id}/spiral-wand.zip` | Download every part of a spiral wand / rider build as one zip  |
 | POST   | `/thumbnail`                  | multipart upload (`file`, `size`) -> **a PNG thumbnail**                |
 | POST   | `/tags/suggest`               | `{"file_name": "...", ...}` -> JSON w/ suggested tags + method          |
 | POST   | `/transcribe`                 | multipart upload (`file`, short audio) -> `{"text": "..."}` (local faster-whisper) |
@@ -471,41 +663,57 @@ the result, since the response is the file itself.
 curl -X POST http://localhost:8000/generate \
   -H "Content-Type: application/json" \
   -d '{"prompt": "a mounting bracket for a raspberry pi, 60mm", "wall_thickness_mm": 3}'
+```
+
+```bash
 # => {"model_id": "...", "backend": "openscad", ...}
-
 curl -o bracket.stl http://localhost:8000/models/<model_id>/download
+```
 
+```bash
 curl -X POST http://localhost:8000/models/<model_id>/thicken \
   -H "Content-Type: application/json" -d '{"amount_mm": 1.5}'
+```
 
+```bash
 # load a file you already have, increase its wall thickness, and save the
 # result directly - one call, no separate download step:
 curl -X POST http://localhost:8000/thicken \
   -F "file=@my_model.stl" -F "amount_mm=1.5" \
   -o my_model_thickened.stl
+```
 
+```bash
 # same one-round-trip shape for mold generation - all params optional:
 curl -X POST http://localhost:8000/mold \
   -F "file=@my_model.stl" -F "clearance_mm=8" \
   -o my_model_mold.zip
+```
 
+```bash
 # direct-cast mode (no silicone step, 2 parts instead of 4):
 curl -X POST http://localhost:8000/mold \
   -F "file=@my_model.stl" -F "mode=direct_cast" -F "direct_mold_wall_mm=6" \
   -o my_model_direct_mold.zip
+```
 
+```bash
 # form-fitting mode (thin contour-hugging skin + support jacket, for
 # organic models a rigid direct_cast mold couldn't release):
 curl -X POST http://localhost:8000/mold \
   -F "file=@my_model.stl" -F "mode=form_fitting" -F "shell_thickness_mm=3" \
   -o my_model_form_fitting_mold.zip
+```
 
+```bash
 # hollow-cast mode (rigid outer mold + a core, for casting a hollow
 # vessel as a shell instead of a solid block):
 curl -X POST http://localhost:8000/mold \
   -F "file=@my_model.stl" -F "mode=hollow_cast" -F "cast_wall_thickness_mm=4" \
   -o my_model_hollow_cast_mold.zip
+```
 
+```bash
 # split along the model's own X axis instead of Z, offset 2mm toward the
 # max end, and estimate the cast's mass at 1.2 g/cm3 - X-Cavity-Volume-Cm3
 # and X-Estimated-Cast-Mass-G come back as response headers:
@@ -625,6 +833,7 @@ are the code's. `.env.example` is the annotated template.
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - symptoms, causes, fixes
 - [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), [CHANGELOG.md](CHANGELOG.md)
 - [Requirements.md](Requirements.md), [Backlog.md](Backlog.md), `docs/adr/` (design decisions)
+- [docs/print-tools-plan.md](docs/print-tools-plan.md) - planned print tools (split to fit, overhangs, photo tool inserts, templates, multi-colour 3MF)
 
 ## Running locally without Docker
 
@@ -691,7 +900,14 @@ This project is intended to be open source (CLAUDE.md rule 7), MIT licensed
 | `anthropic` (Python SDK) | MIT | only used if `LLM_PROVIDER=claude` |
 | `faster-whisper`, `ctranslate2`, `onnxruntime`, `tokenizers`, `huggingface-hub` | MIT / Apache-2.0 | `/transcribe`; Whisper model weights are MIT |
 | `av` (PyAV) | BSD-3-Clause | audio decoding for `/transcribe`; its wheels bundle FFmpeg shared libraries (LGPL) - dynamically linked, keep FFmpeg's notice if redistributing the image |
-| three.js r0.160.0 (vendored, `src/threedprompt/static/vendor/three/`) | MIT | watertight viewer; vendored not CDN-loaded, per rule 4 |
+| three.js r0.160.0 (vendored, `src/threedprompt/static/vendor/three/`) | MIT | watertight and spiral wand viewers; vendored not CDN-loaded, per rule 4 |
+| `trimesh` | MIT | mesh I/O and light repair for the spiral wand feature |
+| `manifold3d` | Apache-2.0 | in-process mesh booleans and twisted extrusions for the spiral wand feature |
+| `networkx` | BSD-3-Clause | used by trimesh's hole filling |
+| `opencv-python-headless` | Apache-2.0 | photo tracing for the tool insert; its wheels bundle FFmpeg shared libraries (LGPL) - dynamically linked, keep FFmpeg's notice if redistributing the image |
+| `lib3mf` (dev only) | BSD-2-Clause | tests check the exported 3MF files with the 3MF consortium's reference library; not used at runtime |
+| `segno` | BSD-3-Clause | QR code encoding for the QR tag template |
+| Gridfinity (sizes only, no files) | MIT | the 42 mm grid, 7 mm height unit and foot profile in `gridfinity.py` follow Zack Freedman's published spec |
 | import_3dm v0.0.18 reader (vendored, `src/threedprompt/blender_scripts/vendor/rhino3dm_reader/`) | MIT | `.3dm` import inside Blender; license + `NOTICE.md` kept alongside |
 | `rhino3dm` (pip, installed into the image's system Python for Blender) | MIT | only needed for `.3dm` input |
 | OpenSCAD | GPL-2.0 | invoked as an external CLI process (subprocess), not linked into this codebase - GPL applies to OpenSCAD itself, not to this project |
@@ -721,7 +937,7 @@ Early stage (`0.1.0`, no tagged releases). See [CONTRIBUTING.md](CONTRIBUTING.md
 for how to propose changes, and `CHANGELOG.md` for what's shipped and
 `docs/adr/` for the reasoning behind the OpenSCAD/Blender split, the hybrid
 classifier, the wall-thickness strategy, the watertight hole-detection/
-repair feature, and the mold-generation feature. `GettingStarted.md` is the
+repair feature, the mold-generation feature, and the spiral wand feature. `GettingStarted.md` is the
 short quick start; `Requirements.md` tracks what's built vs. open.
 
 ## Meshy model and prompt library

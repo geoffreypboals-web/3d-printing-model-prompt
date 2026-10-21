@@ -50,7 +50,7 @@ cd <path-to>/3d-printing-model-prompt && cp .env.example .env && docker compose 
 Windows (PowerShell):
 
 ```powershell
-cd <path-to>d-printing-model-prompt; copy .env.example .env; docker compose up --build -d; docker compose exec ollama ollama pull llama3.1
+cd <path-to>\3d-printing-model-prompt; copy .env.example .env; docker compose up --build -d; docker compose exec ollama ollama pull llama3.1
 ```
 
 Then open `http://localhost:8000/` (browser UI), `/watertight.html`
@@ -62,7 +62,7 @@ Already running Ollama on the host? Set
 and start only the app (Linux/Mac, from the repo folder):
 `cd <path-to>/3d-printing-model-prompt && docker compose up --build -d --no-deps app`.
 Windows (PowerShell):
-`cd <path-to>d-printing-model-prompt; docker compose up --build -d --no-deps app`.
+`cd <path-to>\3d-printing-model-prompt; docker compose up --build -d --no-deps app`.
 More: [docs/AI_SETUP.md](docs/AI_SETUP.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Tests and lint

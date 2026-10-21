@@ -6,6 +6,84 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ## [Unreleased]
 
+### Added (miniatures bin and terrain tiles, 2026-10-19)
+
+- `gridfinity.make_minis_bin` and `POST /templates/minis-bin`: a Gridfinity
+  bin with one round socket per miniature base and optional magnet holes
+  under them; *Minis bin* tab on the templates page.
+- `terrain.py` and `POST /templates/terrain`: seeded terrain tiles (hills,
+  ridges, craters, mesas) with optional terraces, edges eased to the base
+  height so tiles join, and corner magnet holes; *Terrain* tab. The report
+  gives the share of the tile flat enough for a miniature.
+
+### Added (multi-colour 3MF, 2026-10-18)
+
+- `threemf.py`, `POST /models/{model_id}/export-3mf`,
+  `GET /models/{model_id}/multicolour.3mf` and a *Multi-colour 3MF* panel
+  on `templates.html`: one 3MF with a colour and filament slot per part,
+  in the layout Bambu Studio / OrcaSlicer / Elegoo Slicer read ("orca",
+  default) or PrusaSlicer's ("prusa"); see ADR 0015. PrusaSlicer output is
+  tested by slicing when `prusa-slicer` is installed. Dev dependency
+  `lib3mf` (BSD-2-Clause) for tests. Plan item 5 of
+  `docs/print-tools-plan.md`.
+
+### Added (print templates, 2026-10-18)
+
+- `static/templates.html` and `POST /templates/{gridfinity-bin,gear,lithophane,qr-tag}`:
+  Gridfinity bins (compartments, stacking lip, label tabs, magnet holes;
+  `gridfinity.make_bin`), involute spur/helical gears with mating gear,
+  rack and a mesh report (`gear.py`, own code, no library), lithophanes
+  (flat/curved/cylinder with frame; `lithophane.py`, OpenCV decode) and
+  QR tags (text/URL/Wi-Fi, key-ring hole, NFC pocket, two-colour parts;
+  `qr_tag.py`). New dependency `segno` (BSD-3-Clause). Wi-Fi passwords are
+  not stored in the spec. Plan item 4 of `docs/print-tools-plan.md`.
+
+### Added (tool insert from a photo, 2026-10-18)
+
+- `tool_insert.py`, `POST /tool-insert/trace`, `POST /tool-insert` and
+  `static/tool-insert.html`: photograph tools on white paper with a dark
+  calibration square; the sheet is found and flattened (A4/Letter/A3/Legal
+  aspect), the square sets the scale, and each tool's outline is drawn for
+  editing (drag/add/remove points, finger notches, manual two-point scale).
+  The edited outlines become a fitted or Gridfinity tray with a pocket per
+  tool (clearance, depth, floor, stepped top chamfer). Gridfinity sizes and
+  feet in `gridfinity.py`, shared with the coming bin template. New
+  dependency `opencv-python-headless` (Apache-2.0). Plan item 3 of
+  `docs/print-tools-plan.md`.
+
+### Added (overhang check, 2026-10-18)
+
+- Overhang highlighting: an **overhangs** toggle on `split.html`,
+  `spiral-wand.html` and `watertight.html` paints faces steeper than 45 deg
+  from vertical (adjustable on the split page) in red, ignoring faces on the
+  bed. Shared code in `static/viewer-kit.js` (`setOverhangs`).
+- `GET /models/{model_id}/overhangs`: overhang area, total area, fraction
+  and face count (`geometry.overhang_report`). Plan item 2 of
+  `docs/print-tools-plan.md`.
+
+### Added (split to fit, 2026-10-18)
+
+- `split.py`, `POST /models/{model_id}/split`, `GET /models/{model_id}/split.zip`
+  and `static/split.html`: cut a model too big for a printer into pieces
+  that fit, with dowel holes (plus printed pins) or one-way D-pegs on every
+  cut face, and an assembled/exploded 3D view. Printer presets include the
+  Centauri Carbon, Bambu X1/P1/A1 mini, Prusa MK4, Sovol SV08, Ender 3 and
+  CR-10. Shared mesh helpers moved to `geometry.py`; shared viewer code to
+  `static/viewer-kit.js`. Plan item 1 of `docs/print-tools-plan.md`.
+
+### Added (spiral wand, 2026-10-11)
+
+- Spiral wand maker: `spiral_wand.py`, `POST /spiral-wand`,
+  `POST /models/{model_id}/spiral-wand/rider`,
+  `GET /models/{model_id}/parts/{filename}`,
+  `GET /models/{model_id}/spiral-wand.zip`, and the
+  `static/spiral-wand.html` GUI with a three.js viewer that animates the
+  rider spinning down the wand. Wand length, handle, rest gap ("handle
+  distance") and end cap (preset or any model) are configurable; riders
+  come from an upload, a prompt, or an existing model_id. New
+  dependencies: trimesh (MIT), manifold3d (Apache-2.0), networkx (BSD).
+  See `docs/adr/0014-spiral-wand-manifold3d.md`.
+
 ### Added (docs refresh, 2026-10-04)
 
 - `docs/ARCHITECTURE.md`, `docs/AI_SETUP.md`, `CONTRIBUTING.md`,

@@ -7,3 +7,8 @@ python-multipart==0.0.32
 anthropic==0.42.0
 faster-whisper==1.1.1
 cadquery==2.8.0
+trimesh==5.1.1
+manifold3d==3.5.4
+networkx==3.5
+opencv-python-headless==4.13.0.92
+segno==1.6.6

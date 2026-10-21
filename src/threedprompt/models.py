@@ -561,3 +561,415 @@ class RepairSolidResponse(BaseModel):
     valid_before: bool
     valid_after: bool
     download_url: str
+
+
+# --- Spiral wand: twisted wand + figurine riders (spiral_wand.py) ---
+# See docs/adr/0014-spiral-wand-manifold3d.md.
+
+
+class SpiralRodFields(BaseModel):
+    """Rod settings shared by the wand and its riders - a rider only fits a wand built with identical values."""
+
+    rod_diameter_mm: float = Field(14.0, ge=6, le=60, description="Outer diameter of the twisted rod (lobe tips).")
+    lobes: int = Field(3, ge=2, le=8, description="Number of lobes in the rod cross-section.")
+    lobe_depth_mm: float = Field(3.0, gt=0, le=20, description="How far the valleys sit below the lobe tips.")
+    pitch_mm: float = Field(
+        120.0,
+        ge=20,
+        le=2000,
+        description="Rod length per full 360-degree turn. Smaller = more spin per drop but more friction.",
+    )
+    handed: Literal["right", "left"] = Field("right", description="Spiral handedness (which way the rider spins).")
+    clearance_mm: float = Field(
+        0.45, ge=0.1, le=2.0, description="Radial gap per side between rod and rider bore (starting guess)."
+    )
+
+
+class SpiralWandRequest(SpiralRodFields):
+    """POST /spiral-wand request body."""
+
+    total_length_mm: float = Field(300.0, ge=60, le=3000, description="Overall length, handle bottom to cap top.")
+    spiral_length_mm: float | None = Field(
+        None, ge=10, le=3000, description="Set this instead of total_length_mm to fix the spiral length directly."
+    )
+    handle_length_mm: float = Field(90.0, ge=10, le=1000)
+    handle_diameter_mm: float = Field(24.0, ge=8, le=120)
+    handle_gap_mm: float = Field(
+        25.0,
+        ge=0,
+        le=1000,
+        description="Handle distance: plain neck between the handle stop and the spiral, where a rider rests. "
+        "Make it at least the rider's height for the rider to spin freely there.",
+    )
+    stop_diameter_mm: float = Field(30.0, ge=8, le=150, description="Flange at the top of the handle.")
+    stop_thickness_mm: float = Field(4.0, ge=1, le=50)
+    cap_style: Literal["dome", "disc", "cone", "none"] = Field(
+        "dome", description="End cap shape. Ignored when cap_model_id is given."
+    )
+    cap_model_id: str | None = Field(
+        None,
+        pattern=r"^[0-9a-f]{32}$",
+        description="Use an uploaded/generated model as the end cap (scaled to cap_diameter_mm wide, Z up).",
+    )
+    cap_diameter_mm: float = Field(26.0, ge=8, le=200)
+    cap_height_mm: float = Field(14.0, ge=2, le=200)
+    peg_length_mm: float = Field(10.0, ge=3, le=50, description="Length of the D-pegs at the cap and section joints.")
+    joint_clearance_mm: float = Field(0.15, ge=0, le=1.0, description="Radial gap in the D-peg sockets.")
+    max_print_height_mm: float = Field(
+        250.0, ge=50, le=2000, description="Tallest piece your printer can print standing up."
+    )
+
+
+class SpiralRiderRequest(SpiralRodFields):
+    """POST /models/{model_id}/spiral-wand/rider request body."""
+
+    height_mm: float | None = Field(
+        None, gt=0, le=1000, description="Scale the figurine to this height. Omit to use `scale`."
+    )
+    scale: float = Field(1.0, gt=0, le=1000, description="Scale factor, used when height_mm is not given.")
+    up_axis: Literal["z", "y", "x", "-z", "-y", "-x"] = Field(
+        "z", description="Which axis of the input file points up (y for many Blender/game exports)."
+    )
+    offset_x_mm: float = Field(0.0, ge=-500, le=500, description="Move the bore off the figurine's centre.")
+    offset_y_mm: float = Field(0.0, ge=-500, le=500)
+    rotate_deg: float = Field(0.0, ge=-360, le=360, description="Spin the figurine about the bore axis.")
+    collar: Literal["full", "base", "none"] = Field(
+        "full", description="Solid sleeve around the bore: whole height, bottom collar_height_mm only, or none."
+    )
+    collar_wall_mm: float = Field(2.4, ge=0.8, le=20)
+    collar_height_mm: float = Field(12.0, ge=1, le=500)
+    base_diameter_mm: float = Field(0.0, ge=0, le=500, description=">0 adds a round platform under the figurine.")
+    base_thickness_mm: float = Field(3.0, ge=0.8, le=50)
+
+
+class SpiralWandPart(BaseModel):
+    """One STL produced by spiral_wand.py, and where it sits in the assembled wand (for the viewer)."""
+
+    filename: str
+    role: Literal["wand", "cap", "rider"]
+    z_offset_mm: float = Field(description="Height of this part's z=0 in the assembled wand.")
+    size_mm: list[float]
+    url: str | None = None
+
+
+class SpiralWandResult(BaseModel):
+    """Output of spiral_wand.make_wand()/make_rider(); also the core of SpiralWandResponse."""
+
+    parts: list[SpiralWandPart]
+    notes: list[str] = Field(default_factory=list)
+    twist_deg_per_mm: float
+    total_length_mm: float | None = None
+    spiral_length_mm: float | None = None
+    spiral_turns: float | None = None
+    rest_z_mm: float | None = None
+    spiral_start_z_mm: float | None = None
+    spiral_end_z_mm: float | None = None
+    rider_height_mm: float | None = None
+
+
+class SpiralWandResponse(SpiralWandResult):
+    """POST /spiral-wand and POST /models/{model_id}/spiral-wand/rider response body."""
+
+    model_id: str
+    download_url: str
+
+
+# --- Split to fit the bed (split.py) ---
+# See docs/print-tools-plan.md item 1.
+
+
+class SplitRequest(BaseModel):
+    """POST /models/{model_id}/split request body."""
+
+    bed_x_mm: float = Field(250.0, ge=20, le=2000, description="Printable width of the bed.")
+    bed_y_mm: float = Field(250.0, ge=20, le=2000, description="Printable depth of the bed.")
+    bed_z_mm: float = Field(250.0, ge=20, le=2000, description="Printable height.")
+    connector: Literal["dowel", "dpeg", "none"] = Field(
+        "dowel",
+        description="dowel: matching holes in both pieces plus printed pins; dpeg: a one-way D-shaped peg on one "
+        "piece and a socket in the other; none: plain cuts.",
+    )
+    connector_diameter_mm: float = Field(5.0, ge=2, le=30)
+    connector_length_mm: float = Field(12.0, ge=4, le=60, description="Total pin length (half in each piece).")
+    clearance_mm: float = Field(0.15, ge=0, le=1.0, description="Radial gap per side in connector holes.")
+    max_pieces: int = Field(16, ge=2, le=64)
+    margin_mm: float = Field(1.0, ge=0, le=20, description="Space kept free on each side of the bed.")
+
+
+class SplitPart(BaseModel):
+    """One STL produced by split.py (also used for tool_insert.py's single tray)."""
+
+    filename: str
+    role: Literal["piece", "pin"]
+    size_mm: list[float]
+    fits: bool
+    print_hint: str | None = None
+    cell: list[int] | None = Field(None, description="Grid cell [i, j, k] of a piece (for the exploded view).")
+    count: int = Field(1, description="How many to print (dowel pins).")
+    url: str | None = None
+
+
+class SplitResult(BaseModel):
+    """Output of split.split_to_fit(); also the core of SplitResponse."""
+
+    parts: list[SplitPart]
+    notes: list[str] = Field(default_factory=list)
+    grid: list[int]
+    connector_count: int
+    model_size_mm: list[float]
+
+
+class SplitResponse(SplitResult):
+    """POST /models/{model_id}/split response body."""
+
+    model_id: str
+    download_url: str
+
+
+class OverhangResponse(BaseModel):
+    """GET /models/{model_id}/overhangs response body (geometry.overhang_report)."""
+
+    overhang_area_mm2: float
+    total_area_mm2: float
+    overhang_fraction: float = Field(description="Share of the surface that needs support, 0..1.")
+    overhang_face_count: int
+    angle_deg: float
+
+
+# --- Tool insert from a photo (tool_insert.py) ---
+# See docs/print-tools-plan.md item 3.
+
+
+class TracedTool(BaseModel):
+    """One shape traced from the photo."""
+
+    outline_px: list[list[float]] = Field(description="Outline in preview-image pixels (y down).")
+    outline_mm: list[list[float]] | None = Field(
+        None, description="Outline in mm (y up, origin at the paper's bottom-left); null when the scale is unknown."
+    )
+
+
+class TraceResult(BaseModel):
+    """POST /tool-insert/trace response body."""
+
+    mm_per_px: float | None = Field(description="Scale of the preview image; null when no calibration was found.")
+    paper_found: bool
+    square_px: list[list[float]] | None = Field(None, description="Corners of the calibration square, in pixels.")
+    width_px: int
+    height_px: int
+    preview: str = Field(description="The perspective-corrected photo as a JPEG data URL.")
+    tools: list[TracedTool]
+    notes: list[str] = Field(default_factory=list)
+
+
+class Notch(BaseModel):
+    """A round finger notch added to a tool's pocket."""
+
+    x: float = Field(allow_inf_nan=False)
+    y: float = Field(allow_inf_nan=False)
+    d: float = Field(20.0, ge=5, le=60, description="Notch diameter in mm.")
+
+
+class ToolOutline(BaseModel):
+    """One tool's (edited) outline for POST /tool-insert."""
+
+    outline_mm: list[list[float]] = Field(min_length=3, max_length=5000)
+    notches: list[Notch] = Field(default_factory=list, max_length=20)
+
+
+class ToolInsertRequest(BaseModel):
+    """POST /tool-insert request body."""
+
+    tools: list[ToolOutline] = Field(min_length=1, max_length=20)
+    clearance_mm: float = Field(1.0, ge=0, le=5, description="Gap around each tool: 0.5 snug, 1 normal, 2 loose.")
+    depth_mm: float = Field(15.0, ge=2, le=150, description="Pocket depth.")
+    floor_mm: float = Field(2.0, ge=0.6, le=20, description="Material under the pockets.")
+    wall_mm: float = Field(4.0, ge=1, le=50, description="Minimum material between pockets and the tray edge.")
+    tray: Literal["fit", "gridfinity"] = "fit"
+    corner_radius_mm: float = Field(4.0, ge=0, le=30)
+    chamfer_mm: float = Field(1.0, ge=0, le=5, description="Stepped chamfer on the pocket's top edge.")
+    height_units: int | None = Field(None, ge=2, le=30, description="Gridfinity height (7 mm units); null = auto.")
+
+
+class ToolInsertResult(BaseModel):
+    """Output of tool_insert.make_insert(); also the core of ToolInsertResponse."""
+
+    parts: list[SplitPart]
+    tray: str
+    grid_units: list[int] | None = Field(None, description="Gridfinity [x units, y units, height units].")
+    size_mm: list[float]
+    pocket_depth_mm: float
+    floor_mm: float
+    pocket_area_mm2: float
+    notes: list[str] = Field(default_factory=list)
+
+
+class ToolInsertResponse(ToolInsertResult):
+    """POST /tool-insert response body."""
+
+    model_id: str
+
+
+# --- Rule-based templates (gridfinity.py, gear.py, lithophane.py, qr_tag.py, terrain.py) ---
+# See docs/print-tools-plan.md item 4.
+
+
+class TemplatePart(BaseModel):
+    """One STL produced by a template."""
+
+    filename: str
+    size_mm: list[float]
+    print_hint: str | None = None
+    url: str | None = None
+
+
+class TemplateResult(BaseModel):
+    """Output of every template builder; also the core of TemplateResponse."""
+
+    parts: list[TemplatePart]
+    notes: list[str] = Field(default_factory=list)
+    report: dict = Field(default_factory=dict, description="Template-specific numbers (sizes, gear mesh check, ...).")
+
+
+class TemplateResponse(TemplateResult):
+    """Response body of every POST /templates/... route."""
+
+    model_id: str
+
+
+class GridfinityBinRequest(BaseModel):
+    """POST /templates/gridfinity-bin request body."""
+
+    units_x: int = Field(2, ge=1, le=8, description="Width in 42 mm grid units.")
+    units_y: int = Field(1, ge=1, le=8, description="Depth in 42 mm grid units.")
+    height_units: int = Field(6, ge=2, le=20, description="Body height in 7 mm units (the lip adds 4.75 mm).")
+    compartments_x: int = Field(1, ge=1, le=10)
+    compartments_y: int = Field(1, ge=1, le=10)
+    wall_mm: float = Field(1.2, ge=0.8, le=5)
+    divider_mm: float = Field(1.2, ge=0.8, le=5)
+    floor_mm: float = Field(1.2, ge=0.6, le=10, description="Floor above the feet.")
+    stacking_lip: bool = True
+    label_tab: bool = False
+    magnet_holes: bool = False
+
+
+class MinisBinRequest(BaseModel):
+    """POST /templates/minis-bin request body: a Gridfinity bin with a socket per miniature base."""
+
+    units_x: int = Field(2, ge=1, le=8, description="Width in 42 mm grid units.")
+    units_y: int = Field(2, ge=1, le=8, description="Depth in 42 mm grid units.")
+    height_units: int = Field(8, ge=3, le=20, description="Body height in 7 mm units; set it from the tallest figure.")
+    base_diameter_mm: float = Field(25.0, ge=10, le=160, description="Round base: 25, 28, 32, 40, 50, 60 ...")
+    base_clearance_mm: float = Field(0.6, ge=0, le=3, description="Added to the base so it drops in.")
+    socket_depth_mm: float = Field(3.5, ge=1, le=10, description="How deep each base sits.")
+    socket_gap_mm: float = Field(1.6, ge=0.8, le=20, description="Solid floor between two sockets.")
+    wall_mm: float = Field(1.2, ge=0.8, le=5)
+    magnet_diameter_mm: float = Field(0.0, ge=0, le=30, description="Magnet hole under each socket; 0 = none.")
+    magnet_depth_mm: float = Field(2.2, ge=0.5, le=6)
+    stacking_lip: bool = True
+
+
+class TerrainRequest(BaseModel):
+    """POST /templates/terrain request body: one tabletop terrain tile from a seeded height field."""
+
+    style: Literal["hills", "ridges", "craters", "mesa"] = "hills"
+    width_mm: float = Field(152.4, ge=30, le=400, description="152.4 = 6 in, 304.8 = 12 in.")
+    depth_mm: float = Field(152.4, ge=30, le=400)
+    base_mm: float = Field(4.0, ge=1.5, le=20, description="Solid slab under the terrain; also the edge height.")
+    max_height_mm: float = Field(25.0, ge=1, le=150, description="Highest point above the base.")
+    feature_mm: float = Field(50.0, ge=10, le=300, description="Rough size of one hill or valley.")
+    roughness: float = Field(0.45, ge=0.2, le=0.8, description="0.3 smooth .. 0.7 rocky.")
+    terrace_mm: float = Field(0.0, ge=0, le=50, description="Step the surface into flat levels this tall; 0 = smooth.")
+    edge_fade_mm: float = Field(12.0, ge=0, le=100, description="Ease down to the base near the edges so tiles join.")
+    resolution_mm: float = Field(1.5, ge=0.5, le=5, description="Height-field grid spacing.")
+    seed: int = Field(1, ge=0, le=2**31 - 1, description="Same seed + settings = same tile.")
+    magnet_holes: bool = False
+    magnet_diameter_mm: float = Field(6.2, ge=2, le=20)
+    magnet_depth_mm: float = Field(2.2, ge=0.5, le=10)
+
+
+class GearRequest(BaseModel):
+    """POST /templates/gear request body."""
+
+    module: float = Field(2.0, ge=0.5, le=10, description="Tooth size in mm (pitch diameter / teeth).")
+    teeth: int = Field(20, ge=8, le=200)
+    pressure_angle_deg: float = Field(20.0, ge=14.5, le=30)
+    backlash_mm: float = Field(0.15, ge=0, le=1, description="Total play of a pair along the pitch circle.")
+    face_width_mm: float = Field(8.0, ge=1, le=100)
+    helix_angle_deg: float = Field(0.0, ge=-45, le=45, description="0 = spur gear.")
+    bore: Literal["none", "round", "d", "hex"] = "round"
+    bore_diameter_mm: float = Field(5.0, ge=0, le=100, description="Bore size (across flats for hex).")
+    mate_teeth: int | None = Field(None, ge=8, le=200, description="Also build a mating gear with this many teeth.")
+    rack_teeth: int | None = Field(None, ge=2, le=200, description="Also build a rack with this many teeth.")
+    rack_height_mm: float = Field(6.0, ge=1, le=50, description="Rack body below the tooth roots.")
+
+
+class LithophaneRequest(BaseModel):
+    """Form fields of POST /templates/lithophane (the image is the multipart `file`)."""
+
+    shape: Literal["flat", "curved", "cylinder"] = "flat"
+    width_mm: float = Field(
+        100.0, ge=20, le=400, description="Panel width; arc length for curved, circumference for cylinder."
+    )
+    min_thickness_mm: float = Field(0.8, ge=0.4, le=5, description="Thickness at white.")
+    max_thickness_mm: float = Field(3.0, ge=0.8, le=10, description="Thickness at black.")
+    resolution_mm: float = Field(0.25, ge=0.1, le=2, description="Panel size of one image pixel.")
+    frame_mm: float = Field(3.0, ge=0, le=30, description="Solid border (top and bottom only on a cylinder).")
+    curve_deg: float = Field(120.0, ge=10, le=300, description="Arc of a curved panel.")
+
+
+class QrTagRequest(BaseModel):
+    """POST /templates/qr-tag request body. A Wi-Fi password is never logged or stored in the spec."""
+
+    kind: Literal["text", "wifi"] = "text"
+    text: str = Field("", max_length=1000, description="Text or URL (kind=text).")
+    ssid: str = Field("", max_length=64, description="Wi-Fi network name (kind=wifi).")
+    password: str = Field("", max_length=128, description="Wi-Fi password (kind=wifi); ends up in the printed code.")
+    security: Literal["WPA", "WEP", "nopass"] = "WPA"
+    error_correction: Literal["l", "m", "q", "h"] = "m"
+    module_mm: float = Field(2.0, ge=0.8, le=10, description="Size of one QR square.")
+    quiet_zone: int = Field(2, ge=1, le=6, description="Empty border in modules (4 is the standard).")
+    plate_mm: float = Field(3.0, ge=1, le=10)
+    code_height_mm: float = Field(1.0, ge=0.2, le=5)
+    corner_radius_mm: float = Field(3.0, ge=0, le=20)
+    keyring_hole: bool = True
+    nfc_pocket: bool = False
+    nfc_diameter_mm: float = Field(25.0, ge=10, le=60)
+
+
+# --- Multi-colour 3MF export (threemf.py) ---
+# See docs/print-tools-plan.md item 5.
+
+
+class ColourPart(BaseModel):
+    """One STL of a model and the filament it prints with."""
+
+    filename: str = Field(max_length=64)
+    color: str = Field("#F2F2F2", pattern="^#[0-9A-Fa-f]{6}$")
+    extruder: int = Field(1, ge=1, le=16, description="Filament slot (AMS / CANVAS), 1-based.")
+
+
+class Export3mfRequest(BaseModel):
+    """POST /models/{model_id}/export-3mf request body."""
+
+    parts: list[ColourPart] | None = Field(
+        None, max_length=64, description="Parts and filaments; null = every part of the model, one slot each."
+    )
+    assembled: bool = Field(True, description="One object with all parts in place, or each part separately.")
+    slicer: Literal["orca", "prusa"] = Field(
+        "orca",
+        description="orca: Bambu Studio / OrcaSlicer / Elegoo Slicer / Anycubic Slicer Next; prusa: PrusaSlicer "
+        "(they read multi-part objects differently).",
+    )
+
+
+class Export3mfResponse(BaseModel):
+    """POST /models/{model_id}/export-3mf response body."""
+
+    model_id: str
+    download_url: str
+    objects: int
+    parts: int
+    triangles: int
+    slicer: str
+    filaments: list[dict]

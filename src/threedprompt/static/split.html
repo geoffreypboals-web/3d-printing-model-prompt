@@ -1,0 +1,289 @@
+<!--
+Project: 3D Printing Model Prompt
+File: /home/user/3d-printing-model-prompt/src/threedprompt/static/split.html
+Description: GUI + three.js viewer for split-to-fit (split.py), linked from
+    index.html. Pick a model (upload or model_id) and a printer, choose the
+    connector, and see the pieces assembled or pulled apart; each piece is
+    listed with its size, whether it fits and how to lay it on the bed.
+    The "overhangs" toggle paints faces that need support in red, per piece.
+Inputs: User interaction; calls POST /watertight/upload,
+    POST /models/{id}/split, GET /models/{id}/parts/{file} on this origin.
+Outputs: None (a browser page) - files live under the returned model_id.
+Troubleshooting:
+    - "can't split ... into at most N pieces": raise Max pieces or pick a
+      bigger printer preset.
+    - Pieces look stacked on top of each other: drag the Explode slider.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Split to Fit</title>
+<style>
+  :root { --bg: #f7f7f8; --panel-bg: #ffffff; --border: #e2e2e6; --text: #1c1c1f; --text-dim: #6b6b73;
+          --accent: #3d6bff; --error: #e5484d; --ok: #2fae5c; --warn: #b7791f; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #16161a; --panel-bg: #1f1f24; --border: #313138; --text: #ececef;
+                                      --text-dim: #9a9aa2; --warn: #e0a640; }
+  }
+  :root[data-theme="dark"] { --bg: #16161a; --panel-bg: #1f1f24; --border: #313138; --text: #ececef;
+                             --text-dim: #9a9aa2; --warn: #e0a640; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden;
+         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  #viewport { flex: 1; position: relative; min-width: 0; }
+  #viewport canvas { display: block; width: 100%; height: 100%; }
+  #bar { position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; gap: 10px; align-items: center;
+         background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px; }
+  #bar input[type="range"] { flex: 1; min-width: 0; }
+  #sidebar { width: 380px; flex-shrink: 0; background: var(--panel-bg); border-left: 1px solid var(--border);
+             padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+  @media (max-width: 800px) {
+    body { flex-direction: column; height: auto; overflow: auto; }
+    #viewport { height: 60vh; flex: none; }
+    #sidebar { width: 100%; border-left: none; border-top: 1px solid var(--border); }
+  }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  h1 a { color: var(--text-dim); font-size: 12px; font-weight: normal; margin-left: 8px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); margin: 0 0 8px; }
+  fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px 12px; margin: 0; }
+  legend { font-size: 12px; font-weight: 600; padding: 0 4px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+  .grid label, .field label { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--text-dim); }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  input[type="number"], input[type="text"], select { font: inherit; font-size: 13px; padding: 5px 7px; border-radius: 6px;
+         border: 1px solid var(--border); background: var(--bg); color: var(--text); width: 100%; }
+  input[type="file"] { font-size: 12px; }
+  .hint { font-size: 11.5px; color: var(--text-dim); margin: 6px 0 0; }
+  button { font-size: 13px; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border);
+           background: var(--accent); color: white; cursor: pointer; margin-top: 10px; }
+  button:disabled { opacity: 0.45; cursor: default; }
+  .radios { display: flex; gap: 12px; font-size: 12.5px; flex-wrap: wrap; }
+  .radios label { display: inline-flex; gap: 4px; align-items: center; }
+  #status { font-size: 12px; color: var(--text-dim); white-space: pre-wrap; }
+  #status.error { color: var(--error); }
+  #status.ok { color: var(--ok); }
+  #notes { font-size: 12px; color: var(--warn); margin: 0; padding-left: 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  td, th { text-align: left; padding: 4px 4px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  td a { color: var(--accent); }
+  .bad { color: var(--error); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="viewport">
+  <div id="bar">
+    <span>Explode</span>
+    <input id="explode" type="range" min="0" max="1" step="0.01" value="0.35" aria-label="Explode pieces">
+    <label style="display:inline-flex;gap:4px;align-items:center"><input id="showBed" type="checkbox" checked> bed outline</label>
+    <label style="display:inline-flex;gap:4px;align-items:center" title="Faces steeper than this from vertical need support"><input id="showOver" type="checkbox"> overhangs &gt;
+      <input id="overAngle" type="number" value="45" min="10" max="80" step="5" style="width:52px;padding:2px 4px">&deg;</label>
+    <span id="overInfo"></span>
+  </div>
+</div>
+<div id="sidebar">
+  <div>
+    <h1>Split to Fit <a href="/">&larr; back</a></h1>
+    <p class="hint" style="margin-top:0">Cut a model that's too big for your printer into pieces that fit,
+      with dowel holes or one-way pegs so they line up when you glue them.</p>
+  </div>
+
+  <fieldset>
+    <legend>Model</legend>
+    <div class="radios" role="radiogroup" aria-label="Model source">
+      <label><input type="radio" name="src" value="file" checked> Upload file</label>
+      <label><input type="radio" name="src" value="id"> Model id</label>
+    </div>
+    <div class="field" id="srcFile">
+      <label>Mesh (STL/OBJ/PLY/GLB)<input id="file" type="file" accept=".stl,.obj,.ply,.glb,.gltf,.off"></label>
+    </div>
+    <div class="field hidden" id="srcId">
+      <label>Model id<input id="modelId" type="text" placeholder="32-character id"></label>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Printer</legend>
+    <div class="field">
+      <label>Preset<select id="preset">
+        <option value="256,256,256">Elegoo Centauri Carbon (256 x 256 x 256)</option>
+        <option value="256,256,256">Bambu Lab X1 / P1 (256 x 256 x 256)</option>
+        <option value="180,180,180">Bambu Lab A1 mini (180 x 180 x 180)</option>
+        <option value="250,210,220">Prusa MK4 (250 x 210 x 220)</option>
+        <option value="350,350,340">Sovol SV08 (350 x 350 x 340)</option>
+        <option value="220,220,250">Creality Ender 3 (220 x 220 x 250)</option>
+        <option value="300,300,400">Creality CR-10 (300 x 300 x 400)</option>
+        <option value="custom">Custom...</option>
+      </select></label>
+    </div>
+    <div class="grid" style="margin-top:8px">
+      <label>Bed X (mm)<input id="bed_x_mm" type="number" value="256" min="20"></label>
+      <label>Bed Y (mm)<input id="bed_y_mm" type="number" value="256" min="20"></label>
+      <label>Height Z (mm)<input id="bed_z_mm" type="number" value="256" min="20"></label>
+      <label>Margin (mm)<input id="margin_mm" type="number" value="1" min="0" step="0.5"></label>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Connectors</legend>
+    <div class="grid">
+      <label>Type<select id="connector">
+        <option value="dowel">Dowel pins (printed)</option>
+        <option value="dpeg">One-way D-peg</option>
+        <option value="none">None (glue flat)</option>
+      </select></label>
+      <label>Diameter (mm)<input id="connector_diameter_mm" type="number" value="5" min="2" step="0.5"></label>
+      <label>Length (mm)<input id="connector_length_mm" type="number" value="12" min="4" step="1"></label>
+      <label>Clearance (mm)<input id="clearance_mm" type="number" value="0.15" min="0" step="0.05"></label>
+      <label>Max pieces<input id="max_pieces" type="number" value="16" min="2" max="64" step="1"></label>
+    </div>
+    <button id="go" type="button">Split</button>
+  </fieldset>
+
+  <div id="status" role="status"></div>
+  <ul id="notes"></ul>
+  <div id="results" class="hidden">
+    <h2>Pieces</h2>
+    <table><thead><tr><th>File</th><th>Size (mm)</th><th>How to print</th></tr></thead><tbody id="rows"></tbody></table>
+    <p class="hint"><a id="zip" href="#" style="color:var(--accent)">Download all (.zip)</a></p>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "/vendor/three/build/three.module.min.js", "three/addons/": "/vendor/three/examples/jsm/" } }
+</script>
+<script type="module">
+import { createViewer, loadStl, postJson, setOverhangs, uploadMesh } from "/viewer-kit.js";
+
+const $ = (id) => document.getElementById(id);
+const viewer = createViewer($("viewport"), $("bar"));
+const { THREE, scene } = viewer;
+const COLORS = [0x4a78c8, 0xf0902a, 0x2fae5c, 0xb04ad8, 0xe5484d, 0x1fb6c9, 0xd9b21b, 0x7a8a99];
+let pieces = []; // { mesh, cell }
+let gridDims = [1, 1, 1];
+let bedBox = null;
+
+// Update the status line (kind: "" | "ok" | "error").
+function setStatus(text, kind) { $("status").textContent = text; $("status").className = kind || ""; }
+
+for (const r of document.querySelectorAll('input[name="src"]')) {
+  r.addEventListener("change", () => {
+    const v = document.querySelector('input[name="src"]:checked').value;
+    $("srcFile").classList.toggle("hidden", v !== "file");
+    $("srcId").classList.toggle("hidden", v !== "id");
+  });
+}
+$("preset").addEventListener("change", () => {
+  const v = $("preset").value;
+  if (v === "custom") return;
+  const [x, y, z] = v.split(",");
+  $("bed_x_mm").value = x; $("bed_y_mm").value = y; $("bed_z_mm").value = z;
+});
+
+// Offset each piece away from the model's centre by its grid cell, scaled by the Explode slider.
+function applyExplode() {
+  const t = parseFloat($("explode").value);
+  const box = new THREE.Box3();
+  for (const p of pieces) box.expandByObject(p.mesh);
+  const size = box.isEmpty() ? new THREE.Vector3(1, 1, 1) : box.getSize(new THREE.Vector3());
+  for (const p of pieces) {
+    const off = [0, 1, 2].map((i) => (gridDims[i] > 1 ? (p.cell[i] - (gridDims[i] - 1) / 2) * t * (size.getComponent(i) / gridDims[i]) * 0.6 : 0));
+    p.mesh.position.set(off[0], off[1], off[2]);
+  }
+}
+$("explode").addEventListener("input", () => { applyExplode(); refreshOverhangs(); });
+
+// Redraw the red overhang overlay. Pieces print one at a time, so each piece
+// is checked on its own bed (its own lowest point), not the assembled model's.
+function refreshOverhangs() {
+  const enabled = $("showOver").checked;
+  let area = 0;
+  for (const p of pieces) area += setOverhangs([p.mesh], { enabled, angleDeg: parseFloat($("overAngle").value) || 45 }).area;
+  $("overInfo").textContent = enabled ? `${(area / 100).toFixed(0)} cm\u00b2 needs support` : "";
+}
+$("showOver").addEventListener("change", refreshOverhangs);
+$("overAngle").addEventListener("input", refreshOverhangs);
+$("showBed").addEventListener("change", () => { if (bedBox) bedBox.visible = $("showBed").checked; });
+
+// Draw the printer's build volume as a wireframe box next to the model, for scale.
+function drawBed(bed) {
+  if (bedBox) scene.remove(bedBox);
+  const geo = new THREE.EdgesGeometry(new THREE.BoxGeometry(bed[0], bed[1], bed[2]));
+  bedBox = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0x9a9aa2 }));
+  const box = new THREE.Box3();
+  for (const p of pieces) box.expandByObject(p.mesh);
+  bedBox.position.set(box.max.x + bed[0] / 2 + 20, (box.min.y + box.max.y) / 2, box.min.z + bed[2] / 2);
+  bedBox.visible = $("showBed").checked;
+  scene.add(bedBox);
+}
+
+$("go").addEventListener("click", async () => {
+  const btn = $("go");
+  btn.disabled = true;
+  try {
+    let modelId;
+    if (document.querySelector('input[name="src"]:checked').value === "file") {
+      const f = $("file").files[0];
+      if (!f) throw new Error("Pick a mesh file first.");
+      setStatus("Uploading...");
+      modelId = await uploadMesh(f);
+    } else {
+      modelId = $("modelId").value.trim();
+      if (!/^[0-9a-f]{32}$/.test(modelId)) throw new Error("A model id is 32 lowercase hex characters.");
+    }
+    const body = { connector: $("connector").value };
+    for (const k of ["bed_x_mm", "bed_y_mm", "bed_z_mm", "margin_mm", "connector_diameter_mm", "connector_length_mm", "clearance_mm"]) {
+      body[k] = parseFloat($(k).value);
+    }
+    body.max_pieces = parseInt($("max_pieces").value, 10);
+    setStatus("Splitting...");
+    const res = await postJson(`/models/${modelId}/split`, body);
+
+    for (const p of pieces) scene.remove(p.mesh);
+    pieces = [];
+    gridDims = res.grid;
+    let i = 0;
+    for (const part of res.parts.filter((p) => p.role === "piece")) {
+      const mesh = await loadStl(part.url, COLORS[i++ % COLORS.length]);
+      scene.add(mesh);
+      pieces.push({ mesh, cell: part.cell });
+    }
+    applyExplode();
+    refreshOverhangs();
+    drawBed([body.bed_x_mm, body.bed_y_mm, body.bed_z_mm]);
+    viewer.frame([...pieces.map((p) => p.mesh), bedBox]);
+
+    $("rows").innerHTML = "";
+    for (const part of res.parts) {
+      const tr = document.createElement("tr");
+      const a = document.createElement("a");
+      a.href = part.url; a.download = part.filename; a.textContent = part.filename;
+      const td1 = document.createElement("td"); td1.appendChild(a);
+      if (part.count > 1) td1.append(` x${part.count}`);
+      const td2 = document.createElement("td"); td2.textContent = part.size_mm.map((v) => v.toFixed(0)).join(" x ");
+      const td3 = document.createElement("td");
+      td3.textContent = part.fits ? (part.print_hint || "") : "does not fit";
+      if (!part.fits) td3.className = "bad";
+      tr.append(td1, td2, td3);
+      $("rows").appendChild(tr);
+    }
+    $("zip").href = res.download_url;
+    $("results").classList.remove("hidden");
+    $("notes").innerHTML = "";
+    for (const n of res.notes) { const li = document.createElement("li"); li.textContent = n; $("notes").appendChild(li); }
+    const n = res.parts.filter((p) => p.role === "piece").length;
+    setStatus(`${n} piece(s) on a ${res.grid.join(" x ")} grid, ${res.connector_count} connector(s).`, "ok");
+  } catch (err) {
+    console.error(err);
+    setStatus(err.message, "error");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+window.__splitDebug = { scene, get pieces() { return pieces; } };
+</script>
+</body>
+</html>

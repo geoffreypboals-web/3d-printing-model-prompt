@@ -8,7 +8,9 @@ Description: Single-page three.js viewer for the watertight analysis/
     green = likely an intentional opening, amber = ambiguous) placed at
     its centroid, click a marker or its row in the side panel to toggle
     "close this one", then submit the selection to
-    /models/{id}/repair and download the result once it's watertight.
+    /models/{id}/repair and download the result once it's watertight. The
+    "show overhangs" toggle paints faces that need support in red (the GLB
+    is Y-up, so +Y is up there).
 Inputs: Served by main.py's StaticFiles mount; talks to that same
     origin's /watertight/* and /models/{id}/* endpoints. No inputs of
     its own beyond user interaction.
@@ -142,6 +144,7 @@ Troubleshooting:
       <span><i class="swatch" style="background:var(--ambiguous)"></i>ambiguous</span>
       <span><i class="swatch" style="background:var(--flipped)"></i>inverted normals</span>
     </div>
+    <label style="display:inline-flex;gap:4px;align-items:center;font-size:12px;margin-top:6px" title="Faces steeper than 45 deg from vertical need support when printed as oriented"><input id="showOver" type="checkbox"> show overhangs (needs support)</label>
   </div>
 
   <div class="field">
@@ -184,6 +187,7 @@ Troubleshooting:
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { setOverhangs } from "/viewer-kit.js";
 
 // The analysis JSON reports coordinates in the mesh's own (Blender,
 // Z-up) space, but analyze_watertight.py exports the viewer GLB with
@@ -332,12 +336,19 @@ function loadViewerModel(url, bbox) {
         }
       });
       scene.add(meshRoot);
+      refreshOverhangs();
       frameCamera(bbox, report ? report.holes : []);
     },
     undefined,
     (err) => setStatus("Failed to load 3D preview: " + err.message, "error")
   );
 }
+
+// Red overlay on faces that would need support. The viewer GLB is Y-up (glTF), so "up" is +Y here.
+function refreshOverhangs() {
+  setOverhangs([meshRoot], { enabled: document.getElementById("showOver").checked, up: [0, 1, 0] });
+}
+document.getElementById("showOver").addEventListener("change", refreshOverhangs);
 
 function frameCamera(bbox, holes) {
   const gltfBbox = bboxToGltf(bbox);

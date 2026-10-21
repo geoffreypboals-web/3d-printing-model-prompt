@@ -1,0 +1,573 @@
+<!--
+Project: 3D Printing Model Prompt
+File: /home/user/3d-printing-model-prompt/src/threedprompt/static/spiral-wand.html
+Description: Browser GUI + three.js viewer for the spiral wand feature
+    (spiral_wand.py), linked from index.html. Set the wand's length,
+    handle, rest gap ("handle distance") and end cap; make a rider from an
+    uploaded figurine, a model generated from a text prompt, or an
+    existing model_id; then see the assembled wand in 3D and play the
+    rider spinning down the spiral. Every part downloads as STL, or all
+    together as a zip. The "overhangs" toggle paints faces that need
+    support in red (viewer-kit.js setOverhangs).
+Inputs: User interaction; calls the same-origin API in main.py:
+    POST /spiral-wand, POST /watertight/upload, POST /generate,
+    POST /models/{id}/spiral-wand/rider, GET /models/{id}/parts/{file}.
+Outputs: None (a browser page) - generated files live under the
+    model_ids the API returns.
+Troubleshooting:
+    - Viewer stays empty after a build: open the browser console - the
+      STL fetch or parse error is logged there. The parser only reads
+      binary STL, which is all spiral_wand.py writes.
+    - Rider passes through the rod in the animation: the rider and wand
+      were built with different rod settings - the status panel warns
+      about this; rebuild one of them with matching values.
+    - "Generate from prompt" is slow or fails with 503: that path runs
+      the normal /generate pipeline (LLM + Blender/OpenSCAD) - check
+      GET /health.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spiral Wand</title>
+<style>
+  :root {
+    --bg: #f7f7f8;
+    --panel-bg: #ffffff;
+    --border: #e2e2e6;
+    --text: #1c1c1f;
+    --text-dim: #6b6b73;
+    --accent: #3d6bff;
+    --error: #e5484d;
+    --ok: #2fae5c;
+    --warn: #b7791f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16161a;
+      --panel-bg: #1f1f24;
+      --border: #313138;
+      --text: #ececef;
+      --text-dim: #9a9aa2;
+      --warn: #e0a640;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16161a;
+    --panel-bg: #1f1f24;
+    --border: #313138;
+    --text: #ececef;
+    --text-dim: #9a9aa2;
+    --warn: #e0a640;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    height: 100vh;
+    display: flex;
+    overflow: hidden;
+  }
+  #viewport { flex: 1; position: relative; min-width: 0; }
+  #viewport canvas { display: block; width: 100%; height: 100%; }
+  #playbar {
+    position: absolute; left: 12px; right: 12px; bottom: 12px;
+    display: flex; gap: 10px; align-items: center;
+    background: var(--panel-bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+    font-size: 12px;
+  }
+  #playbar input[type="range"] { flex: 1; min-width: 0; }
+  #playbar button { white-space: nowrap; }
+  #sidebar {
+    width: 380px; flex-shrink: 0;
+    background: var(--panel-bg); border-left: 1px solid var(--border);
+    padding: 16px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  @media (max-width: 800px) {
+    body { flex-direction: column; height: auto; overflow: auto; }
+    #viewport { height: 60vh; flex: none; }
+    #sidebar { width: 100%; border-left: none; border-top: 1px solid var(--border); }
+  }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  h1 a { color: var(--text-dim); font-size: 12px; font-weight: normal; margin-left: 8px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); margin: 0 0 8px; }
+  fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px 12px; margin: 0; }
+  legend { font-size: 12px; font-weight: 600; padding: 0 4px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+  .grid label, .field label { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--text-dim); }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  input[type="number"], input[type="text"], select, textarea {
+    font: inherit; font-size: 13px; padding: 5px 7px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text); width: 100%;
+  }
+  textarea { min-height: 3.5rem; resize: vertical; }
+  input[type="file"] { font-size: 12px; }
+  .hint { font-size: 11.5px; color: var(--text-dim); margin: 6px 0 0; }
+  button {
+    font-size: 13px; padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--accent); color: white; cursor: pointer; margin-top: 10px;
+  }
+  button:disabled { opacity: 0.45; cursor: default; }
+  button.secondary { background: transparent; color: var(--text); margin-top: 0; padding: 5px 10px; }
+  .radios { display: flex; gap: 12px; font-size: 12.5px; flex-wrap: wrap; }
+  .radios label { display: inline-flex; gap: 4px; align-items: center; color: var(--text); }
+  details summary { font-size: 12px; cursor: pointer; color: var(--text-dim); margin-top: 8px; }
+  #status { font-size: 12px; color: var(--text-dim); white-space: pre-wrap; }
+  #status.error { color: var(--error); }
+  #status.ok { color: var(--ok); }
+  #notes { font-size: 12px; color: var(--warn); margin: 0; padding-left: 18px; }
+  #downloads { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+  #downloads a { color: var(--accent); }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="viewport">
+  <div id="playbar">
+    <button id="playBtn" type="button" class="secondary" disabled>&#9654; Play</button>
+    <input id="riderPos" type="range" min="0" max="1" step="0.001" value="0" disabled aria-label="Rider position">
+    <span id="posLabel">build a wand and a rider</span>
+    <label style="display:inline-flex;gap:4px;align-items:center;white-space:nowrap" title="Faces steeper than 45 deg from vertical need support"><input id="showOver" type="checkbox"> overhangs</label>
+  </div>
+</div>
+<div id="sidebar">
+  <div>
+    <h1>Spiral Wand <a href="/">&larr; back</a></h1>
+    <p class="hint" style="margin-top:0">A twisted wand plus a figurine "rider" that spins down it under gravity.
+      Rod settings are shared: a rider only fits a wand built with the same ones.</p>
+  </div>
+
+  <fieldset>
+    <legend>Rod (shared)</legend>
+    <div class="grid">
+      <label>Rod diameter (mm)<input id="rod_diameter_mm" type="number" value="14" min="6" step="0.5"></label>
+      <label>Lobes<input id="lobes" type="number" value="3" min="2" max="8" step="1"></label>
+      <label>Lobe depth (mm)<input id="lobe_depth_mm" type="number" value="3" min="0.5" step="0.1"></label>
+      <label>Pitch, mm per turn<input id="pitch_mm" type="number" value="120" min="20" step="5"></label>
+      <label>Spin direction<select id="handed"><option value="right">right-handed</option><option value="left">left-handed</option></select></label>
+      <label>Clearance (mm)<input id="clearance_mm" type="number" value="0.45" min="0.1" max="2" step="0.05"></label>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Wand</legend>
+    <div class="grid">
+      <label>Total length (mm)<input id="total_length_mm" type="number" value="300" min="60" step="5"></label>
+      <label>Spiral length (mm, optional)<input id="spiral_length_mm" type="number" min="10" step="5" placeholder="from total"></label>
+      <label>Handle length (mm)<input id="handle_length_mm" type="number" value="90" min="10" step="5"></label>
+      <label>Handle diameter (mm)<input id="handle_diameter_mm" type="number" value="24" min="8" step="1"></label>
+      <label>Handle distance / rest gap (mm)<input id="handle_gap_mm" type="number" value="60" min="0" step="5"></label>
+      <label>Max print height (mm)<input id="max_print_height_mm" type="number" value="250" min="50" step="10"></label>
+      <label>End cap<select id="cap_style">
+        <option value="dome">dome</option><option value="disc">disc</option><option value="cone">cone</option>
+        <option value="none">none</option><option value="custom">my own model...</option></select></label>
+      <label>Cap diameter (mm)<input id="cap_diameter_mm" type="number" value="26" min="8" step="1"></label>
+      <label>Cap height (mm)<input id="cap_height_mm" type="number" value="14" min="2" step="1"></label>
+      <label>Stop flange diameter (mm)<input id="stop_diameter_mm" type="number" value="30" min="8" step="1"></label>
+    </div>
+    <div class="field hidden" id="capFileField">
+      <label>Cap model (STL/OBJ/PLY/GLB, Z up)<input id="capFile" type="file" accept=".stl,.obj,.ply,.glb,.gltf,.off"></label>
+    </div>
+    <p class="hint">Set the rest gap at least as tall as the rider so it spins freely when it lands.</p>
+    <button id="wandBtn" type="button">Build wand</button>
+  </fieldset>
+
+  <fieldset>
+    <legend>Rider (figurine)</legend>
+    <div class="radios" role="radiogroup" aria-label="Rider source">
+      <label><input type="radio" name="riderSource" value="file" checked> Upload file</label>
+      <label><input type="radio" name="riderSource" value="prompt"> From a prompt</label>
+      <label><input type="radio" name="riderSource" value="id"> Model id</label>
+    </div>
+    <div class="field" id="srcFile">
+      <label>Figurine (STL/OBJ/PLY/GLB)<input id="riderFile" type="file" accept=".stl,.obj,.ply,.glb,.gltf,.off"></label>
+    </div>
+    <div class="field hidden" id="srcPrompt">
+      <label>Describe the figurine<textarea id="riderPrompt" placeholder="a small sitting fox figurine, 50mm tall"></textarea></label>
+    </div>
+    <div class="field hidden" id="srcId">
+      <label>Model id (from /generate or an upload)<input id="riderModelId" type="text" placeholder="32-character id"></label>
+    </div>
+    <div class="grid" style="margin-top:8px">
+      <label>Height (mm)<input id="height_mm" type="number" value="50" min="5" step="1"></label>
+      <label>Up axis of the file<select id="up_axis">
+        <option value="z">Z (most print files)</option><option value="y">Y (Blender/game exports)</option>
+        <option value="x">X</option><option value="-z">-Z</option><option value="-y">-Y</option><option value="-x">-X</option></select></label>
+      <label>Bore sleeve<select id="collar"><option value="full">full height</option><option value="base">base only</option><option value="none">none</option></select></label>
+      <label>Base platform dia. (mm, 0 = none)<input id="base_diameter_mm" type="number" value="0" min="0" step="1"></label>
+    </div>
+    <details>
+      <summary>Positioning</summary>
+      <div class="grid" style="margin-top:8px">
+        <label>Bore offset X (mm)<input id="offset_x_mm" type="number" value="0" step="0.5"></label>
+        <label>Bore offset Y (mm)<input id="offset_y_mm" type="number" value="0" step="0.5"></label>
+        <label>Turn figurine (deg)<input id="rotate_deg" type="number" value="0" step="5"></label>
+        <label>Sleeve wall (mm)<input id="collar_wall_mm" type="number" value="2.4" min="0.8" step="0.2"></label>
+      </div>
+    </details>
+    <button id="riderBtn" type="button">Build rider</button>
+  </fieldset>
+
+  <div id="status" role="status"></div>
+  <ul id="notes"></ul>
+  <div>
+    <h2>Downloads</h2>
+    <div id="downloads"><span class="hint" style="margin:0">Nothing built yet.</span></div>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "/vendor/three/build/three.module.min.js",
+    "three/addons/": "/vendor/three/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
+import { setOverhangs } from "/viewer-kit.js";
+
+const ROD_FIELDS = ["rod_diameter_mm", "lobes", "lobe_depth_mm", "pitch_mm", "handed", "clearance_mm"];
+const WAND_FIELDS = ["total_length_mm", "spiral_length_mm", "handle_length_mm", "handle_diameter_mm", "handle_gap_mm",
+  "max_print_height_mm", "cap_diameter_mm", "cap_height_mm", "stop_diameter_mm"];
+const RIDER_FIELDS = ["height_mm", "up_axis", "collar", "base_diameter_mm", "offset_x_mm", "offset_y_mm",
+  "rotate_deg", "collar_wall_mm"];
+const COLORS = { wand: 0x4a78c8, cap: 0x6f8fd8, rider: 0xf0902a };
+
+const $ = (id) => document.getElementById(id);
+const statusEl = $("status");
+const notesEl = $("notes");
+const downloadsEl = $("downloads");
+const viewport = $("viewport");
+
+let wandBuild = null;   // { response, rodKey, group }
+let riderBuild = null;  // { response, rodKey, mesh }
+let playing = false;
+
+// Update the status line (kind: "" | "ok" | "error").
+function setStatus(text, kind) {
+  statusEl.textContent = text;
+  statusEl.className = kind || "";
+}
+
+// Read the listed inputs into a request body, skipping empty optional numbers.
+function readFields(ids) {
+  const body = {};
+  for (const id of ids) {
+    const el = $(id);
+    if (el.type === "number") {
+      if (el.value === "") continue;
+      body[id] = id === "lobes" ? parseInt(el.value, 10) : parseFloat(el.value);
+    } else {
+      body[id] = el.value;
+    }
+  }
+  return body;
+}
+
+// Turn a FastAPI error body (string detail, or a list of validation errors) into readable text.
+async function errorText(resp) {
+  try {
+    const data = await resp.json();
+    if (Array.isArray(data.detail)) {
+      return data.detail.map((d) => `${(d.loc || []).slice(1).join(".")}: ${d.msg}`).join("\n");
+    }
+    return data.detail || resp.statusText;
+  } catch {
+    return resp.statusText;
+  }
+}
+
+// POST JSON and return the parsed response, throwing a readable Error on failure.
+async function postJson(url, body) {
+  const resp = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!resp.ok) throw new Error(await errorText(resp));
+  return resp.json();
+}
+
+// Upload a mesh file and return its model_id.
+async function uploadMesh(file) {
+  const form = new FormData();
+  form.append("file", file);
+  const resp = await fetch("/watertight/upload", { method: "POST", body: form });
+  if (!resp.ok) throw new Error(await errorText(resp));
+  return (await resp.json()).model_id;
+}
+
+// Parse a binary STL into an indexed BufferGeometry with smooth-ish normals.
+function parseBinaryStl(buffer) {
+  const view = new DataView(buffer);
+  const count = view.getUint32(80, true);
+  if (84 + count * 50 > buffer.byteLength) throw new Error("not a binary STL");
+  const positions = new Float32Array(count * 9);
+  let o = 84;
+  for (let i = 0; i < count; i++) {
+    o += 12; // skip the stored normal
+    for (let j = 0; j < 9; j++) { positions[i * 9 + j] = view.getFloat32(o, true); o += 4; }
+    o += 2;
+  }
+  let geom = new THREE.BufferGeometry();
+  geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geom = mergeVertices(geom, 1e-4);
+  geom.computeVertexNormals();
+  return geom;
+}
+
+// Fetch one part STL and return a mesh in the given colour.
+async function loadPart(url, color) {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`could not load ${url}: ${resp.status}`);
+  const geom = parseBinaryStl(await resp.arrayBuffer());
+  return new THREE.Mesh(geom, new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.05 }));
+}
+
+// --- three.js scene (Z up, like the STL files) -------------------------------
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(getComputedStyle(document.body).getPropertyValue("--bg").trim() || 0x16161a);
+const camera = new THREE.PerspectiveCamera(40, 1, 0.5, 20000);
+camera.up.set(0, 0, 1);
+camera.position.set(420, -420, 260);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+viewport.insertBefore(renderer.domElement, $("playbar"));
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.target.set(0, 0, 150);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x444455, 1.1));
+const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+sun.position.set(300, -200, 600);
+scene.add(sun);
+const grid = new THREE.GridHelper(400, 20, 0x888888, 0x555555);
+grid.rotation.x = Math.PI / 2;
+scene.add(grid);
+
+// Keep the renderer and camera matched to the viewport's size.
+function resize() {
+  const w = viewport.clientWidth, h = viewport.clientHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+}
+window.addEventListener("resize", resize);
+resize();
+
+// Point the camera at whatever is in the scene.
+function frameScene() {
+  const box = new THREE.Box3();
+  if (wandBuild) box.expandByObject(wandBuild.group);
+  if (riderBuild) box.expandByObject(riderBuild.mesh);
+  if (box.isEmpty()) return;
+  const centre = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3()).length();
+  controls.target.copy(centre);
+  camera.position.copy(centre).add(new THREE.Vector3(size * 1.15, -size * 1.15, size * 0.4));
+}
+
+// --- rider placement and animation --------------------------------------------
+// Range of the rider's base height: from fully on the spiral under the cap down to the stop flange.
+function riderTravel() {
+  const w = wandBuild.response;
+  const h = riderBuild.response.rider_height_mm || 0;
+  const top = Math.max(w.rest_z_mm, w.spiral_end_z_mm - h);
+  return { top, bottom: w.rest_z_mm };
+}
+
+// Place the rider at slider position t (0 = top of the spiral, 1 = landed on the stop).
+function placeRider(t) {
+  if (!riderBuild) return;
+  const rate = riderBuild.response.twist_deg_per_mm;
+  if (!wandBuild) {
+    riderBuild.mesh.position.set(0, 0, 0);
+    riderBuild.mesh.rotation.set(0, 0, 0);
+    return;
+  }
+  const { top, bottom } = riderTravel();
+  const z = top + (bottom - top) * t;
+  // The bore's twist phase at the rider's own z=0 is 0, so turning it by rate*z lines it up with the rod.
+  riderBuild.mesh.position.set(0, 0, z);
+  riderBuild.mesh.rotation.set(0, 0, THREE.MathUtils.degToRad(rate * z));
+  $("posLabel").textContent = `rider at ${z.toFixed(0)} mm, turned ${((rate * z) % 360).toFixed(0)}°`;
+}
+
+// Enable the play bar once there's something to animate.
+function refreshPlaybar() {
+  const ready = Boolean(wandBuild && riderBuild);
+  $("playBtn").disabled = !ready;
+  $("riderPos").disabled = !ready;
+  if (!ready) $("posLabel").textContent = wandBuild ? "now build a rider" : riderBuild ? "now build a wand" : "build a wand and a rider";
+  if (ready && wandBuild.rodKey !== riderBuild.rodKey) {
+    setStatus("Heads up: the wand and rider were built with different rod settings, so they won't fit each other.", "error");
+  }
+}
+
+let fallStart = 0;
+$("playBtn").addEventListener("click", () => {
+  playing = !playing;
+  $("playBtn").innerHTML = playing ? "&#10073;&#10073; Pause" : "&#9654; Play";
+  if (playing) {
+    if (parseFloat($("riderPos").value) >= 1) $("riderPos").value = 0;
+    fallStart = performance.now() - Math.sqrt(parseFloat($("riderPos").value)) * 2500;
+  }
+});
+$("riderPos").addEventListener("input", (ev) => placeRider(parseFloat(ev.target.value)));
+
+// Per-frame loop: advance the fall (eased like gravity), update controls, draw.
+function animate(now) {
+  requestAnimationFrame(animate);
+  if (playing && wandBuild && riderBuild) {
+    const s = Math.min(1, (now - fallStart) / 2500);
+    const t = s * s;
+    $("riderPos").value = t;
+    placeRider(t);
+    if (s >= 1) { playing = false; $("playBtn").innerHTML = "&#9654; Play"; }
+  }
+  controls.update();
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(animate);
+
+// --- results panel -------------------------------------------------------------
+// Rebuild the download links and notes from the current builds.
+function refreshPanel() {
+  downloadsEl.innerHTML = "";
+  notesEl.innerHTML = "";
+  for (const [label, build] of [["Wand", wandBuild], ["Rider", riderBuild]]) {
+    if (!build) continue;
+    const r = build.response;
+    const zip = document.createElement("a");
+    zip.href = r.download_url;
+    zip.textContent = `${label}: all parts (.zip)`;
+    downloadsEl.appendChild(zip);
+    for (const part of r.parts) {
+      const a = document.createElement("a");
+      a.href = part.url;
+      a.download = part.filename;
+      a.textContent = ` ${part.filename} (${part.size_mm.map((v) => v.toFixed(0)).join(" × ")} mm)`;
+      downloadsEl.appendChild(a);
+    }
+    for (const note of r.notes) {
+      const li = document.createElement("li");
+      li.textContent = `${label}: ${note}`;
+      notesEl.appendChild(li);
+    }
+  }
+  if (!downloadsEl.children.length) downloadsEl.innerHTML = '<span class="hint" style="margin:0">Nothing built yet.</span>';
+}
+
+// Red overlay on faces that need support. Each part prints on its own, so each is
+// checked against its own lowest point (the rider and cap are printed flat side down).
+function refreshOverhangs() {
+  const enabled = $("showOver").checked;
+  const parts = [];
+  if (wandBuild) parts.push(...wandBuild.group.children);
+  if (riderBuild) parts.push(riderBuild.mesh);
+  for (const m of parts) setOverhangs([m], { enabled });
+}
+$("showOver").addEventListener("change", refreshOverhangs);
+
+// --- build actions ---------------------------------------------------------------
+$("cap_style").addEventListener("change", () => {
+  $("capFileField").classList.toggle("hidden", $("cap_style").value !== "custom");
+});
+for (const radio of document.querySelectorAll('input[name="riderSource"]')) {
+  radio.addEventListener("change", () => {
+    const v = document.querySelector('input[name="riderSource"]:checked').value;
+    $("srcFile").classList.toggle("hidden", v !== "file");
+    $("srcPrompt").classList.toggle("hidden", v !== "prompt");
+    $("srcId").classList.toggle("hidden", v !== "id");
+  });
+}
+
+$("wandBtn").addEventListener("click", async () => {
+  const btn = $("wandBtn");
+  btn.disabled = true;
+  try {
+    const rod = readFields(ROD_FIELDS);
+    const body = { ...rod, ...readFields(WAND_FIELDS) };
+    const capStyle = $("cap_style").value;
+    if (capStyle === "custom") {
+      const file = $("capFile").files[0];
+      if (!file) throw new Error("Pick a cap model file first.");
+      setStatus("Uploading the cap model...");
+      body.cap_model_id = await uploadMesh(file);
+    } else {
+      body.cap_style = capStyle;
+    }
+    setStatus("Building the wand...");
+    const response = await postJson("/spiral-wand", body);
+    const group = new THREE.Group();
+    for (const part of response.parts) {
+      const mesh = await loadPart(part.url, COLORS[part.role]);
+      mesh.position.z = part.z_offset_mm;
+      group.add(mesh);
+    }
+    if (wandBuild) scene.remove(wandBuild.group);
+    scene.add(group);
+    wandBuild = { response, rodKey: JSON.stringify(rod), group };
+    refreshOverhangs();
+    setStatus(`Wand built: ${response.total_length_mm} mm long, spiral ${response.spiral_length_mm} mm `
+      + `(${response.spiral_turns} turns), ${response.parts.length} part(s).`, "ok");
+    refreshPanel();
+    refreshPlaybar();
+    placeRider(parseFloat($("riderPos").value));
+    frameScene();
+  } catch (err) {
+    console.error(err);
+    setStatus(err.message, "error");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("riderBtn").addEventListener("click", async () => {
+  const btn = $("riderBtn");
+  btn.disabled = true;
+  try {
+    const source = document.querySelector('input[name="riderSource"]:checked').value;
+    let modelId;
+    if (source === "file") {
+      const file = $("riderFile").files[0];
+      if (!file) throw new Error("Pick a figurine file first.");
+      setStatus("Uploading the figurine...");
+      modelId = await uploadMesh(file);
+    } else if (source === "prompt") {
+      const prompt = $("riderPrompt").value.trim();
+      if (!prompt) throw new Error("Describe the figurine first.");
+      setStatus("Generating the figurine from your prompt - this can take a while...");
+      modelId = (await postJson("/generate", { prompt })).model_id;
+    } else {
+      modelId = $("riderModelId").value.trim();
+      if (!/^[0-9a-f]{32}$/.test(modelId)) throw new Error("A model id is 32 lowercase hex characters.");
+    }
+    const rod = readFields(ROD_FIELDS);
+    setStatus("Cutting the bore and building the rider...");
+    const response = await postJson(`/models/${modelId}/spiral-wand/rider`, { ...rod, ...readFields(RIDER_FIELDS) });
+    const mesh = await loadPart(response.parts[0].url, COLORS.rider);
+    if (riderBuild) scene.remove(riderBuild.mesh);
+    scene.add(mesh);
+    riderBuild = { response, rodKey: JSON.stringify(rod), mesh };
+    refreshOverhangs();
+    setStatus(`Rider built: ${response.rider_height_mm} mm tall. Press Play to drop it down the wand.`, "ok");
+    refreshPanel();
+    refreshPlaybar();
+    placeRider(parseFloat($("riderPos").value));
+    frameScene();
+  } catch (err) {
+    console.error(err);
+    setStatus(err.message, "error");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// Exposed for manual debugging in the browser console only.
+window.__spiralDebug = { scene, camera, get wandBuild() { return wandBuild; }, get riderBuild() { return riderBuild; } };
+</script>
+</body>
+</html>

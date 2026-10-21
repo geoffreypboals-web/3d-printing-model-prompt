@@ -322,3 +322,99 @@ Meshy only serves a task's files for a few days after it finishes. The sync
 still saves the prompt and settings; download the model from the Meshy
 website (My Assets) if you still need it. The daily cron run prevents this for
 new items.
+
+## Spiral wand: the rider is rejected, binds, or the sleeve shows
+
+- **422 "is not a closed solid"** from `/models/{id}/spiral-wand/rider`:
+  `spiral_wand.py` only does light repair (merging vertices, filling small
+  holes, unioning overlapping shells). Open the model in
+  `/watertight.html`, repair it, and build the rider from the repaired
+  `model_id`.
+- **The printed rider binds or won't drop:** raise `clearance_mm` (try
+  0.6) and rebuild *both* wand and rider with the same value, or raise
+  `pitch_mm` for a steeper spiral. The 0.45 mm / 120 mm defaults are
+  starting guesses, not print-tested values.
+- **"The bore sleeve shows over N% of the height":** the figurine is
+  slimmer than the bore wall there, so the sleeve is visible. Make the
+  rider taller (`height_mm`) or use a slimmer rod for both parts (for
+  example `rod_diameter_mm` 10 with `lobe_depth_mm` 2.2).
+- **The viewer animation shows the rider passing through the rod:** the
+  rider and wand were built with different rod settings; the GUI warns
+  about this. Rebuild one of them to match.
+
+## Split to fit: a joint has no connector, or pins don't fit
+
+- **"N cut face(s) were too thin or small for a connector":** the model's
+  cross-section at that cut can't hold a hole of `connector_diameter_mm`
+  with a wall around it, or a hole there would break through the surface.
+  Glue that joint flat, or split again with a smaller diameter.
+- **Pins too tight or loose:** change `clearance_mm` (gap per side,
+  default 0.15 mm) and split again; the pin file itself doesn't change.
+- **"can't split ... into at most N pieces":** raise `max_pieces` or pick
+  a bigger printer.
+
+## Tool insert: wrong size, merged tools, or no square found
+
+- **"Calibration square not found":** the square must be solid, dark,
+  square (not a rectangle) and well apart from the tools; a printed square
+  that came out grey can fall below the threshold. Or use **Set scale** in
+  the page with two points a known distance apart.
+- **Sizes off along one direction:** the paper size setting doesn't match
+  the sheet (the flattened photo is given that sheet's shape). With
+  "Other", shoot from straight above.
+- **Two tools traced as one shape:** they touch or their shadows do; leave
+  a gap, light from above, or fix the outline by hand.
+- **Shadow included in the outline:** drag those points in; the clearance
+  is added afterwards, so trace the tool itself.
+- **Gridfinity insert taller than expected:** the height rounds up to whole
+  7 mm units including the 4.75 mm feet; the extra goes into the floor
+  (reported as `floor_mm`). Set *Height units* or a shallower pocket.
+- **Slicer says non-manifold after editing outlines:** an outline that
+  crosses itself is filled by the non-zero rule; drag the crossing points
+  apart and rebuild.
+
+## Multi-colour 3MF: everything on one filament, or parts fall apart
+
+- **Bambu Studio / Orca / Elegoo puts every part on filament 1:** open the
+  3MF on its own (File > Open, or drop it on an empty plate). Importing it
+  into an existing project can keep only the geometry. Also check it was
+  exported with slicer "orca".
+- **PrusaSlicer shows separate objects and the top part drops to the
+  bed:** export with slicer "prusa"; PrusaSlicer doesn't keep components
+  together (ADR 0015).
+- **Wrong colours in the slicer:** the slot numbers decide the filament,
+  not the colours; the colours are only a preview. Map slots to your AMS /
+  CANVAS spools in the slicer.
+
+## Print templates: gears bind, QR won't scan, lithophane too faint
+
+- **Gears bind or skip:** raise `backlash_mm` (0.15-0.25 for FDM), turn
+  off elephant's-foot compensation surprises by checking the first layer,
+  and keep the same module and pressure angle on both gears. Fewer than 17
+  teeth at 20 deg is weak at the root (undercut isn't modelled).
+- **Helical gears don't mesh:** the two gears need opposite helix angles;
+  the template does this for the mate, but a gear built on its own needs
+  `helix_angle_deg` negated for its partner.
+- **QR tag won't scan:** contrast is everything - dark code on a light
+  plate. Keep squares at 1.5 mm or more and the quiet zone at 2+ (4 is the
+  standard). A higher error-correction level makes a bigger code.
+- **Lithophane looks flat:** thicker maximum (3-3.2 mm) and thinner
+  minimum (0.6-0.8 mm), 100 % infill, and a light directly behind it.
+  "Too fine" errors: raise mm per pixel.
+- **Gridfinity bin loose/tight in a baseplate:** print one 1 x 1 x 3 test
+  bin first; the foot follows the spec's numbers but slicer XY
+  compensation varies.
+
+## Overhang check: red faces where you didn't expect them
+
+- **The whole bottom is red:** the model's lowest point isn't flat on the
+  bed (it's tilted, or a small foot sticks down), so its underside isn't
+  treated as "on the bed". Lay it flat in the slicer; the check uses the
+  model as stored, Z up.
+- **watertight.html shows overhangs sideways:** that page's preview is the
+  analyzed GLB, which is Y-up; the toggle already uses +Y as up there. If
+  it looks wrong, the source file was exported Y-up; re-export it Z-up.
+- **The number differs from your slicer's support area:** slicers add
+  bridges, minimum island sizes and their own angle rules; this is the raw
+  face area past the angle.
+
