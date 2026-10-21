@@ -5,7 +5,32 @@ the **Pro** plan), add an **open-source** generator as well, and have the local
 one **check out a GPU pair only when it's needed**, because AI Story Writer is
 the main user of lambda02's GPUs.
 
-Status: plan. Nothing built yet.
+Status: plan. Built so far: the Meshy model and prompt library (`scripts/meshy_library_sync.py`, 2026-10-07). Board: WP-61 to WP-65, H-11, H-12.
+
+## 0. Licence check results (WP-61, 2026-10-07)
+
+| Component | Licence | Commercial use | Note |
+|---|---|---|---|
+| Meshy outputs (Pro plan, incl. API) | Meshy Terms of Use 3.2 | ✅ owned by the customer | Don't remove Meshy's AI-identification metadata; don't use outputs to train AI that competes with Meshy (2.6(xi)) |
+| TripoSR code | MIT | ✅ | |
+| TripoSR weights (stabilityai/TripoSR) | MIT | ✅ | Model card asks not to make disturbing/offensive content (guideline) |
+| torchmcubes | MPL-2.0 | ✅ | File-level copyleft: only changes to its own files must be shared; use as-is |
+| rembg (code) | MIT | ✅ | |
+| rembg **default** model (BRIA RMBG 2.0) | BRIA licence | ❌ **paid agreement for commercial use** | **Never use the default.** Pin `u2net` (U-2-Net, Apache-2.0 code and weights) |
+
+## 0b. Model and prompt library (owner request, 2026-10-07)
+
+Every Meshy result is kept with its prompt, so prompts can be improved from
+real results. `scripts/meshy_library_sync.py` downloads each finished Meshy
+task's files and saves `PROMPT.md` (prompt, settings, a notes section) and
+`record.json`, plus `index.md`/`index.csv`, into `output/meshy_library/`, and
+copies new items to the owner's commercial-licence folder on mastercomputerb:
+`C:\Users\maritime407\OneDrive\3d printing\01-Commercial License\00-boals made\Meshy library`.
+Meshy's download links expire a few days after a task finishes, so it runs
+daily from cron on lambda02 now, and the Meshy backend (WP-62) will run it
+after every generation. Items made on the Meshy website show up in the API
+lists too; their files are saved only if the sync runs before they expire.
+
 
 ## 1. Why
 
@@ -97,8 +122,9 @@ Selection (`ORGANIC_BACKEND`, default `auto`) for COMPLEX prompts:
   the process exits after it, so it **holds no GPU memory between jobs**.
 - The worker listens on the Docker bridge only (`172.17.0.1`), like the app;
   the app calls `POST /mesh` with the image and gets an OBJ/STL back.
-- Background removal before TripoSR: `rembg` (MIT; check its model weights'
-  licence in phase 0).
+- Background removal before TripoSR: `rembg` (MIT) with the **`u2net`** model
+  pinned (Apache-2.0). Its default model, BRIA RMBG, needs a paid commercial
+  licence and must not be used.
 - Output is scaled, repaired and thickened by the same pipeline as Meshy.
 
 ## 5. Printability (both new backends)

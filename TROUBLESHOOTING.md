@@ -316,6 +316,13 @@ named `threedprompt_output` only if Compose runs from a folder-name-derived
 project that prefixes it - check `docker volume ls`) before any operation that
 might disrupt the volume (host rebuild, `docker compose down -v`, etc.).
 
+## Meshy library: "expired" for an item
+
+Meshy only serves a task's files for a few days after it finishes. The sync
+still saves the prompt and settings; download the model from the Meshy
+website (My Assets) if you still need it. The daily cron run prevents this for
+new items.
+
 ## Spiral wand: the rider is rejected, binds, or the sleeve shows
 
 - **422 "is not a closed solid"** from `/models/{id}/spiral-wand/rider`:
