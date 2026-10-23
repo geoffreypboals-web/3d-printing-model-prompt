@@ -205,8 +205,8 @@ Before merging any branch into `main` (per rule 12), confirm:
 
 - This repo is one of ~20 in a connected "suite" rooted at `SuiteControl`. A single cross-project reference tracks every project's high-level requirements, shipped features, and anything considered and discarded/deferred (with the reason why), so that reasoning is available in future sessions instead of being re-derived from scratch.
 - Source of truth: `SuiteControl/docs/CROSS_PROJECT_KNOWLEDGE_BASE.md`
-- Rendered copy (viewable from any chat, not just a coding session): https://claude.ai/code/artifact/b70f8b23-8d5f-4191-a34c-0bd1a0bc9911
-- **Rule:** Whenever work in this repo ships a notable feature, changes a requirement, or explicitly decides against/defers something (the kind of decision that would normally go in rule 24's ADRs or this repo's own Backlog.md), also update the matching section of `SuiteControl/docs/CROSS_PROJECT_KNOWLEDGE_BASE.md` (attach the `SuiteControl` repo via `add_repo` if it isn't already in this session's scope), and republish the Fleet Ledger artifact at the URL above from the updated file so both copies stay in sync. Keep the addition short and in the existing entry's style — this is a running record, not a place for a full rewrite.
+- Shown in the Fleet Hub (Ledgers tab): https://claude.ai/artifact/GkabAviJw36xjD7ADs2b6t
+- **Rule:** Whenever work in this repo ships a notable feature, changes a requirement, or explicitly decides against/defers something (the kind of decision that would normally go in rule 24's ADRs or this repo's own Backlog.md), also update the matching section of `SuiteControl/docs/CROSS_PROJECT_KNOWLEDGE_BASE.md` (attach the `SuiteControl` repo via `add_repo` if it isn't already in this session's scope), and refresh its Fleet Hub document the way `SuiteControl/CLAUDE.md` describes (no republish). Keep the addition short and in the existing entry's style — this is a running record, not a place for a full rewrite.
 
 ## 26. Claude Code session efficiency — spend tokens deliberately
 
