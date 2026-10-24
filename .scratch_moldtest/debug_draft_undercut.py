@@ -54,11 +54,19 @@ script = os.path.join(repo_root, "src", "threedprompt", "blender_scripts", "anal
 blender = r"C:\Program Files\Blender Foundation\Blender 4.5\blender.exe"
 
 cmd = [
-    blender, "--background", "--python", script, "--",
-    "--input", STL_PATH,
-    "--output", REPORT,
-    "--pull-axis", "z",
-    "--min-draft-angle-deg", "2.0",
+    blender,
+    "--background",
+    "--python",
+    script,
+    "--",
+    "--input",
+    STL_PATH,
+    "--output",
+    REPORT,
+    "--pull-axis",
+    "z",
+    "--min-draft-angle-deg",
+    "2.0",
 ]
 result = subprocess.run(cmd, capture_output=True, text=True)
 print("returncode:", result.returncode)

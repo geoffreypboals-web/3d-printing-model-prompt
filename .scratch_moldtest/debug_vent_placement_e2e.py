@@ -9,6 +9,7 @@ Run: blender --background --python debug_vent_placement_e2e.py
 make_mold.py CLI, then re-launches blender to inspect the result - same
 harness shape as debug_offset_investigate.py)
 """
+
 import json
 import os
 import struct
@@ -35,12 +36,18 @@ verts = {
     "111": (8.0, -8.0, 9.0),  # lifted corner = the bump apex
 }
 tris = [
-    ("000", "010", "110"), ("000", "110", "100"),
-    ("001", "101", "111"), ("001", "111", "011"),
-    ("000", "100", "101"), ("000", "101", "001"),
-    ("010", "011", "111"), ("010", "111", "110"),
-    ("000", "001", "011"), ("000", "011", "010"),
-    ("100", "110", "111"), ("100", "111", "101"),
+    ("000", "010", "110"),
+    ("000", "110", "100"),
+    ("001", "101", "111"),
+    ("001", "111", "011"),
+    ("000", "100", "101"),
+    ("000", "101", "001"),
+    ("010", "011", "111"),
+    ("010", "111", "110"),
+    ("000", "001", "011"),
+    ("000", "011", "010"),
+    ("100", "110", "111"),
+    ("100", "111", "101"),
 ]
 with open(STL_PATH, "wb") as f:
     f.write(b"\x00" * 80)
@@ -53,27 +60,51 @@ with open(STL_PATH, "wb") as f:
 
 os.makedirs(OUT_DIR, exist_ok=True)
 cmd = [
-    BLENDER, "--background", "--python", SCRIPT, "--",
-    "--input", STL_PATH,
-    "--output-dir", OUT_DIR,
-    "--report-output", REPORT,
-    "--mode", "direct_cast",
-    "--direct-mold-wall-mm", "3.0",
-    "--parting-axis", "z",
-    "--parting-offset-mm", "0.0",
-    "--shell-thickness-mm", "3.0",
-    "--skin-pour-wall-mm", "3.0",
-    "--support-jacket-wall-mm", "5.0",
-    "--cast-wall-thickness-mm", "4.0",
-    "--clearance-mm", "8.0",
-    "--pour-box-wall-mm", "4.0",
-    "--key-diameter-mm", "6.0",
-    "--sprue-diameter-mm", "3.0",
-    "--vent-diameter-mm", "1.5",
-    "--clamp-wall-mm", "6.0",
-    "--clamp-flange-width-mm", "12.0",
-    "--bolt-hole-diameter-mm", "4.5",
-    "--max-dimension-mm", "300.0",
+    BLENDER,
+    "--background",
+    "--python",
+    SCRIPT,
+    "--",
+    "--input",
+    STL_PATH,
+    "--output-dir",
+    OUT_DIR,
+    "--report-output",
+    REPORT,
+    "--mode",
+    "direct_cast",
+    "--direct-mold-wall-mm",
+    "3.0",
+    "--parting-axis",
+    "z",
+    "--parting-offset-mm",
+    "0.0",
+    "--shell-thickness-mm",
+    "3.0",
+    "--skin-pour-wall-mm",
+    "3.0",
+    "--support-jacket-wall-mm",
+    "5.0",
+    "--cast-wall-thickness-mm",
+    "4.0",
+    "--clearance-mm",
+    "8.0",
+    "--pour-box-wall-mm",
+    "4.0",
+    "--key-diameter-mm",
+    "6.0",
+    "--sprue-diameter-mm",
+    "3.0",
+    "--vent-diameter-mm",
+    "1.5",
+    "--clamp-wall-mm",
+    "6.0",
+    "--clamp-flange-width-mm",
+    "12.0",
+    "--bolt-hole-diameter-mm",
+    "4.5",
+    "--max-dimension-mm",
+    "300.0",
 ]
 result = subprocess.run(cmd, capture_output=True, text=True)
 print("rc", result.returncode)
