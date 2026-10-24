@@ -5,6 +5,7 @@ falls back to that fixed offset for a flat-topped box (no genuine peak).
 
 Run: blender --background --python debug_vent_placement.py
 """
+
 import importlib.util
 import sys
 

@@ -6,6 +6,7 @@ solid centered inside the original - the "core" that seats inside the
 mold cavity so a pour fills only the thin shell gap around it.
 Run: blender --background --python debug_hollow_core.py
 """
+
 import bmesh
 import bpy
 

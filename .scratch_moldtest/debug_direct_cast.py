@@ -21,16 +21,28 @@ def _write_unit_cube_stl(path):
     import struct
 
     verts = {
-        "000": (0.0, 0.0, 0.0), "100": (1.0, 0.0, 0.0), "010": (0.0, 1.0, 0.0), "110": (1.0, 1.0, 0.0),
-        "001": (0.0, 0.0, 1.0), "101": (1.0, 0.0, 1.0), "011": (0.0, 1.0, 1.0), "111": (1.0, 1.0, 1.0),
+        "000": (0.0, 0.0, 0.0),
+        "100": (1.0, 0.0, 0.0),
+        "010": (0.0, 1.0, 0.0),
+        "110": (1.0, 1.0, 0.0),
+        "001": (0.0, 0.0, 1.0),
+        "101": (1.0, 0.0, 1.0),
+        "011": (0.0, 1.0, 1.0),
+        "111": (1.0, 1.0, 1.0),
     }
     tris = [
-        ("000", "010", "110"), ("000", "110", "100"),
-        ("001", "101", "111"), ("001", "111", "011"),
-        ("000", "100", "101"), ("000", "101", "001"),
-        ("010", "011", "111"), ("010", "111", "110"),
-        ("000", "001", "011"), ("000", "011", "010"),
-        ("100", "110", "111"), ("100", "111", "101"),
+        ("000", "010", "110"),
+        ("000", "110", "100"),
+        ("001", "101", "111"),
+        ("001", "111", "011"),
+        ("000", "100", "101"),
+        ("000", "101", "001"),
+        ("010", "011", "111"),
+        ("010", "111", "110"),
+        ("000", "001", "011"),
+        ("000", "011", "010"),
+        ("100", "110", "111"),
+        ("100", "111", "101"),
     ]
     with open(path, "wb") as f:
         f.write(b"\x00" * 80)
@@ -50,21 +62,39 @@ script = os.path.join(repo_root, "src", "threedprompt", "blender_scripts", "make
 blender = r"C:\Program Files\Blender Foundation\Blender 4.5\blender.exe"
 
 cmd = [
-    blender, "--background", "--python", script, "--",
-    "--input", CUBE_STL,
-    "--output-dir", OUT_DIR,
-    "--report-output", REPORT,
-    "--mode", "direct_cast",
-    "--direct-mold-wall-mm", "3.0",
-    "--clearance-mm", "5.0",
-    "--pour-box-wall-mm", "3.0",
-    "--key-diameter-mm", "6.0",
-    "--sprue-diameter-mm", "10.0",
-    "--vent-diameter-mm", "4.0",
-    "--clamp-wall-mm", "4.0",
-    "--clamp-flange-width-mm", "8.0",
-    "--bolt-hole-diameter-mm", "4.5",
-    "--max-dimension-mm", "300.0",
+    blender,
+    "--background",
+    "--python",
+    script,
+    "--",
+    "--input",
+    CUBE_STL,
+    "--output-dir",
+    OUT_DIR,
+    "--report-output",
+    REPORT,
+    "--mode",
+    "direct_cast",
+    "--direct-mold-wall-mm",
+    "3.0",
+    "--clearance-mm",
+    "5.0",
+    "--pour-box-wall-mm",
+    "3.0",
+    "--key-diameter-mm",
+    "6.0",
+    "--sprue-diameter-mm",
+    "10.0",
+    "--vent-diameter-mm",
+    "4.0",
+    "--clamp-wall-mm",
+    "4.0",
+    "--clamp-flange-width-mm",
+    "8.0",
+    "--bolt-hole-diameter-mm",
+    "4.5",
+    "--max-dimension-mm",
+    "300.0",
 ]
 result = subprocess.run(cmd, capture_output=True, text=True)
 print("returncode:", result.returncode)
@@ -86,8 +116,7 @@ bottom_path = report["paths"]["direct_mold_bottom"]
 
 verify_script = os.path.join(tempfile.gettempdir(), "debug_direct_cast_verify.py")
 with open(verify_script, "w") as f:
-    f.write(
-        f"""
+    f.write(f"""
 import bpy
 import bmesh
 from mathutils import Vector
@@ -128,11 +157,8 @@ bbox_min = [min(v.co[i] for v in bm.verts) for i in range(3)]
 bbox_max = [max(v.co[i] for v in bm.verts) for i in range(3)]
 print("BBOX_MIN=", bbox_min)
 print("BBOX_MAX=", bbox_max)
-"""
-    )
+""")
 
-verify_result = subprocess.run(
-    [blender, "--background", "--python", verify_script], capture_output=True, text=True
-)
+verify_result = subprocess.run([blender, "--background", "--python", verify_script], capture_output=True, text=True)
 print("verify stdout:\n", verify_result.stdout)
 print("verify stderr tail:\n", "\n".join(verify_result.stderr.splitlines()[-20:]))
