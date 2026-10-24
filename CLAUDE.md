@@ -207,6 +207,7 @@ Before merging any branch into `main` (per rule 12), confirm:
 - Source of truth: `SuiteControl/docs/CROSS_PROJECT_KNOWLEDGE_BASE.md`
 - Shown in the Fleet Hub (Ledgers tab): https://claude.ai/artifact/GkabAviJw36xjD7ADs2b6t
 - **Rule:** Whenever work in this repo ships a notable feature, changes a requirement, or explicitly decides against/defers something (the kind of decision that would normally go in rule 24's ADRs or this repo's own Backlog.md), also update the matching section of `SuiteControl/docs/CROSS_PROJECT_KNOWLEDGE_BASE.md` (attach the `SuiteControl` repo via `add_repo` if it isn't already in this session's scope), and refresh its Fleet Hub document the way `SuiteControl/CLAUDE.md` describes (no republish). Keep the addition short and in the existing entry's style — this is a running record, not a place for a full rewrite.
+- Owner decisions and the AI work board: the Fleet Board Owner View, https://claude.ai/artifact/MwNVk8tvNk6SRtNYEQ7wT7 (live: what needs the owner, open PRs, decision history). When the owner answers a question in a session here, record it with `local-ai-infrastructure/scripts/decisions.py add` (request, options, answer, date); rules in `local-ai-infrastructure/docs/decisions/README.md`.
 
 ## 26. Claude Code session efficiency — spend tokens deliberately
 
