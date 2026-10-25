@@ -29,16 +29,28 @@ REPORT = os.path.join(tempfile.gettempdir(), "debug_parting_report.json")
 def _write_box_stl(path, sx, sy, sz):
     """Axis-aligned box from (0,0,0) to (sx,sy,sz)."""
     verts = {
-        "000": (0.0, 0.0, 0.0), "100": (sx, 0.0, 0.0), "010": (0.0, sy, 0.0), "110": (sx, sy, 0.0),
-        "001": (0.0, 0.0, sz), "101": (sx, 0.0, sz), "011": (0.0, sy, sz), "111": (sx, sy, sz),
+        "000": (0.0, 0.0, 0.0),
+        "100": (sx, 0.0, 0.0),
+        "010": (0.0, sy, 0.0),
+        "110": (sx, sy, 0.0),
+        "001": (0.0, 0.0, sz),
+        "101": (sx, 0.0, sz),
+        "011": (0.0, sy, sz),
+        "111": (sx, sy, sz),
     }
     tris = [
-        ("000", "010", "110"), ("000", "110", "100"),
-        ("001", "101", "111"), ("001", "111", "011"),
-        ("000", "100", "101"), ("000", "101", "001"),
-        ("010", "011", "111"), ("010", "111", "110"),
-        ("000", "001", "011"), ("000", "011", "010"),
-        ("100", "110", "111"), ("100", "111", "101"),
+        ("000", "010", "110"),
+        ("000", "110", "100"),
+        ("001", "101", "111"),
+        ("001", "111", "011"),
+        ("000", "100", "101"),
+        ("000", "101", "001"),
+        ("010", "011", "111"),
+        ("010", "111", "110"),
+        ("000", "001", "011"),
+        ("000", "011", "010"),
+        ("100", "110", "111"),
+        ("100", "111", "101"),
     ]
     with open(path, "wb") as f:
         f.write(b"\x00" * 80)
@@ -58,19 +70,32 @@ script = os.path.join(repo_root, "src", "threedprompt", "blender_scripts", "make
 blender = r"C:\Program Files\Blender Foundation\Blender 4.5\blender.exe"
 
 BASE_ARGS = [
-    "--shell-thickness-mm", "3.0",
-    "--skin-pour-wall-mm", "3.0",
-    "--support-jacket-wall-mm", "5.0",
-    "--cast-wall-thickness-mm", "0.1",
-    "--clearance-mm", "8.0",
-    "--pour-box-wall-mm", "4.0",
-    "--key-diameter-mm", "6.0",
-    "--sprue-diameter-mm", "10.0",
-    "--vent-diameter-mm", "4.0",
-    "--clamp-wall-mm", "6.0",
-    "--clamp-flange-width-mm", "8.0",
-    "--bolt-hole-diameter-mm", "4.5",
-    "--max-dimension-mm", "300.0",
+    "--shell-thickness-mm",
+    "3.0",
+    "--skin-pour-wall-mm",
+    "3.0",
+    "--support-jacket-wall-mm",
+    "5.0",
+    "--cast-wall-thickness-mm",
+    "0.1",
+    "--clearance-mm",
+    "8.0",
+    "--pour-box-wall-mm",
+    "4.0",
+    "--key-diameter-mm",
+    "6.0",
+    "--sprue-diameter-mm",
+    "10.0",
+    "--vent-diameter-mm",
+    "4.0",
+    "--clamp-wall-mm",
+    "6.0",
+    "--clamp-flange-width-mm",
+    "8.0",
+    "--bolt-hole-diameter-mm",
+    "4.5",
+    "--max-dimension-mm",
+    "300.0",
 ]
 
 
@@ -79,14 +104,25 @@ def run(mode, direct_mold_wall_mm, parting_axis, parting_offset_mm, out_subdir):
     os.makedirs(out_dir, exist_ok=True)
     report_path = os.path.join(out_dir, "report.json")
     cmd = [
-        blender, "--background", "--python", script, "--",
-        "--input", BOX_STL,
-        "--output-dir", out_dir,
-        "--report-output", report_path,
-        "--mode", mode,
-        "--direct-mold-wall-mm", str(direct_mold_wall_mm),
-        "--parting-axis", parting_axis,
-        "--parting-offset-mm", str(parting_offset_mm),
+        blender,
+        "--background",
+        "--python",
+        script,
+        "--",
+        "--input",
+        BOX_STL,
+        "--output-dir",
+        out_dir,
+        "--report-output",
+        report_path,
+        "--mode",
+        mode,
+        "--direct-mold-wall-mm",
+        str(direct_mold_wall_mm),
+        "--parting-axis",
+        parting_axis,
+        "--parting-offset-mm",
+        str(parting_offset_mm),
         *BASE_ARGS,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -103,8 +139,7 @@ def run(mode, direct_mold_wall_mm, parting_axis, parting_offset_mm, out_subdir):
 def verify_bbox(stl_path):
     verify_script = os.path.join(tempfile.gettempdir(), "debug_parting_verify.py")
     with open(verify_script, "w") as f:
-        f.write(
-            f"""
+        f.write(f"""
 import bpy
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.wm.stl_import(filepath=r"{stl_path}")
@@ -114,8 +149,7 @@ ys = [v.co.y for v in obj.data.vertices]
 zs = [v.co.z for v in obj.data.vertices]
 print("BBOX_MIN=", min(xs), min(ys), min(zs))
 print("BBOX_MAX=", max(xs), max(ys), max(zs))
-"""
-        )
+""")
     result = subprocess.run([blender, "--background", "--python", verify_script], capture_output=True, text=True)
     out = result.stdout
     bmin = out.split("BBOX_MIN=")[1].split("\n")[0].strip()

@@ -7,6 +7,7 @@ make_mold.py's existing Z-hardcoded geometry code for an X or Y parting
 axis, without rewriting build_half()/build_offset_cavity_half()/etc.
 Run: blender --background --python debug_parting_axis.py
 """
+
 import math
 
 import bpy

@@ -8,6 +8,7 @@ Inputs: synthetic Meshy task records; no network.
 Outputs: pass/fail.
 Troubleshooting: a test that hangs made a real HTTP call; patch urlopen.
 """
+
 import importlib.util
 import json
 import urllib.error
@@ -18,11 +19,18 @@ spec = importlib.util.spec_from_file_location("meshy_library_sync", ROOT / "scri
 sync = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sync)
 
-TASK = {"id": "49cfa43d-4db2-431d-9a00-df22f94854dc", "type": "image-to-3d", "name": "scout canvas tent",
-        "texture_prompt": "Olive canvas ridge tent", "status": "SUCCEEDED", "created_at": 1786586498795,
-        "model_urls": {"glb": "https://assets.example/t/model.glb?Expires=1", "stl": "https://assets.example/t/m.stl"},
-        "thumbnail_url": "https://assets.example/t/thumb.png", "texture_urls": [{"base_color": "https://assets.example/t/c.png"}],
-        "_endpoint": "v1/image-to-3d"}
+TASK = {
+    "id": "49cfa43d-4db2-431d-9a00-df22f94854dc",
+    "type": "image-to-3d",
+    "name": "scout canvas tent",
+    "texture_prompt": "Olive canvas ridge tent",
+    "status": "SUCCEEDED",
+    "created_at": 1786586498795,
+    "model_urls": {"glb": "https://assets.example/t/model.glb?Expires=1", "stl": "https://assets.example/t/m.stl"},
+    "thumbnail_url": "https://assets.example/t/thumb.png",
+    "texture_urls": [{"base_color": "https://assets.example/t/c.png"}],
+    "_endpoint": "v1/image-to-3d",
+}
 
 
 def test_slug_is_windows_safe():
@@ -43,6 +51,7 @@ def test_tasks_listed_by_two_endpoints_are_kept_once(monkeypatch):
         if path.startswith(("v1/text-to-image", "v1/image-to-image")):
             return [{"id": "same", "status": "SUCCEEDED"}]
         return []
+
     monkeypatch.setattr(sync, "get_json", fake_get)
     assert [t["id"] for t in sync.list_tasks("k")] == ["same"]
 
@@ -50,6 +59,7 @@ def test_tasks_listed_by_two_endpoints_are_kept_once(monkeypatch):
 def test_an_expired_item_still_saves_its_prompt(tmp_path, monkeypatch):
     def gone(url, timeout=0):
         raise urllib.error.HTTPError(url, 403, "Forbidden", {}, None)
+
     monkeypatch.setattr(sync.urllib.request, "urlopen", gone)
     row = sync.save_item(dict(TASK), tmp_path, refresh=False)
     folder = tmp_path / row["folder"]

@@ -8,6 +8,7 @@ volume calculators (offset/model difference) produce sane, non-negative
 numbers.
 Run: blender --background --python debug_parting_offset_form_hollow.py
 """
+
 import json
 import os
 import struct
@@ -20,16 +21,28 @@ OUT_DIR = os.path.join(tempfile.gettempdir(), "debug_parting2_out")
 
 def _write_box_stl(path, sx, sy, sz):
     verts = {
-        "000": (0.0, 0.0, 0.0), "100": (sx, 0.0, 0.0), "010": (0.0, sy, 0.0), "110": (sx, sy, 0.0),
-        "001": (0.0, 0.0, sz), "101": (sx, 0.0, sz), "011": (0.0, sy, sz), "111": (sx, sy, sz),
+        "000": (0.0, 0.0, 0.0),
+        "100": (sx, 0.0, 0.0),
+        "010": (0.0, sy, 0.0),
+        "110": (sx, sy, 0.0),
+        "001": (0.0, 0.0, sz),
+        "101": (sx, 0.0, sz),
+        "011": (0.0, sy, sz),
+        "111": (sx, sy, sz),
     }
     tris = [
-        ("000", "010", "110"), ("000", "110", "100"),
-        ("001", "101", "111"), ("001", "111", "011"),
-        ("000", "100", "101"), ("000", "101", "001"),
-        ("010", "011", "111"), ("010", "111", "110"),
-        ("000", "001", "011"), ("000", "011", "010"),
-        ("100", "110", "111"), ("100", "111", "101"),
+        ("000", "010", "110"),
+        ("000", "110", "100"),
+        ("001", "101", "111"),
+        ("001", "111", "011"),
+        ("000", "100", "101"),
+        ("000", "101", "001"),
+        ("010", "011", "111"),
+        ("010", "111", "110"),
+        ("000", "001", "011"),
+        ("000", "011", "010"),
+        ("100", "110", "111"),
+        ("100", "111", "101"),
     ]
     with open(path, "wb") as f:
         f.write(b"\x00" * 80)
@@ -49,16 +62,26 @@ script = os.path.join(repo_root, "src", "threedprompt", "blender_scripts", "make
 blender = r"C:\Program Files\Blender Foundation\Blender 4.5\blender.exe"
 
 BASE_ARGS = [
-    "--direct-mold-wall-mm", "3.0",
-    "--clearance-mm", "8.0",
-    "--pour-box-wall-mm", "4.0",
-    "--key-diameter-mm", "6.0",
-    "--sprue-diameter-mm", "10.0",
-    "--vent-diameter-mm", "4.0",
-    "--clamp-wall-mm", "6.0",
-    "--clamp-flange-width-mm", "8.0",
-    "--bolt-hole-diameter-mm", "4.5",
-    "--max-dimension-mm", "300.0",
+    "--direct-mold-wall-mm",
+    "3.0",
+    "--clearance-mm",
+    "8.0",
+    "--pour-box-wall-mm",
+    "4.0",
+    "--key-diameter-mm",
+    "6.0",
+    "--sprue-diameter-mm",
+    "10.0",
+    "--vent-diameter-mm",
+    "4.0",
+    "--clamp-wall-mm",
+    "6.0",
+    "--clamp-flange-width-mm",
+    "8.0",
+    "--bolt-hole-diameter-mm",
+    "4.5",
+    "--max-dimension-mm",
+    "300.0",
 ]
 
 
@@ -67,11 +90,19 @@ def run(mode, out_subdir, extra):
     os.makedirs(out_dir, exist_ok=True)
     report_path = os.path.join(out_dir, "report.json")
     cmd = [
-        blender, "--background", "--python", script, "--",
-        "--input", BOX_STL,
-        "--output-dir", out_dir,
-        "--report-output", report_path,
-        "--mode", mode,
+        blender,
+        "--background",
+        "--python",
+        script,
+        "--",
+        "--input",
+        BOX_STL,
+        "--output-dir",
+        out_dir,
+        "--report-output",
+        report_path,
+        "--mode",
+        mode,
         *BASE_ARGS,
         *extra,
     ]
@@ -89,15 +120,41 @@ def run(mode, out_subdir, extra):
 r1 = run(
     "form_fitting",
     "form_offset",
-    ["--shell-thickness-mm", "1.0", "--skin-pour-wall-mm", "2.0", "--support-jacket-wall-mm", "3.0",
-     "--cast-wall-thickness-mm", "0.1", "--parting-axis", "z", "--parting-offset-mm", "1.0"],
+    [
+        "--shell-thickness-mm",
+        "1.0",
+        "--skin-pour-wall-mm",
+        "2.0",
+        "--support-jacket-wall-mm",
+        "3.0",
+        "--cast-wall-thickness-mm",
+        "0.1",
+        "--parting-axis",
+        "z",
+        "--parting-offset-mm",
+        "1.0",
+    ],
 )
 print("form_fitting (offset=1.0) OK, cavity_volume_mm3:", r1["cavity_volume_mm3"], "(expect > 0, shell volume)")
 
 r2 = run(
     "hollow_cast",
     "hollow_offset",
-    ["--shell-thickness-mm", "1.0", "--skin-pour-wall-mm", "2.0", "--support-jacket-wall-mm", "3.0",
-     "--cast-wall-thickness-mm", "0.1", "--parting-axis", "y", "--parting-offset-mm", "-0.5"],
+    [
+        "--shell-thickness-mm",
+        "1.0",
+        "--skin-pour-wall-mm",
+        "2.0",
+        "--support-jacket-wall-mm",
+        "3.0",
+        "--cast-wall-thickness-mm",
+        "0.1",
+        "--parting-axis",
+        "y",
+        "--parting-offset-mm",
+        "-0.5",
+    ],
 )
-print("hollow_cast (axis=y, offset=-0.5) OK, cavity_volume_mm3:", r2["cavity_volume_mm3"], "(expect > 0, box minus core)")
+print(
+    "hollow_cast (axis=y, offset=-0.5) OK, cavity_volume_mm3:", r2["cavity_volume_mm3"], "(expect > 0, box minus core)"
+)

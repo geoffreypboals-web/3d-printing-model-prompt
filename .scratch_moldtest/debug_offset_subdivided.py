@@ -6,6 +6,7 @@ present), run the same normal-push used by make_mold.py's
 _offset_model_along_normals, and compare an interior-face-vertex displacement
 against a corner-vertex displacement.
 """
+
 import bpy
 import bmesh
 

@@ -25,6 +25,7 @@ Troubleshooting:
     - An item made on the Meshy website is missing: the API lists tasks made
       through the API and Meshy's own tools; download others from the site.
 """
+
 import argparse
 import csv
 import json
@@ -42,15 +43,42 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 API = "https://api.meshy.ai/openapi"
 # Every task list Meshy's API offers; a 404 for one is skipped.
-ENDPOINTS = ["v2/text-to-3d", "v1/image-to-3d", "v1/multi-image-to-3d", "v1/text-to-image",
-             "v1/image-to-image", "v1/remesh", "v1/retexture", "v1/rigging", "v1/animations"]
-PROMPT_FIELDS = ["prompt", "object_prompt", "style_prompt", "texture_prompt", "negative_prompt",
-                 "text_style_prompt", "art_style", "ai_model", "model_type", "topology", "target_polycount",
-                 "should_remesh", "should_texture", "enable_pbr", "texture_resolution", "hd_texture",
-                 "texture_image_url", "image_style_url"]
-LICENCE_NOTE = ("Made with Meshy on a paid (Pro) plan: the customer owns this output (Meshy Terms of Use 3.2); "
-                "commercial use and selling prints allowed. Don't remove Meshy's AI-identification metadata; "
-                "don't use these files to train AI models that compete with Meshy.")
+ENDPOINTS = [
+    "v2/text-to-3d",
+    "v1/image-to-3d",
+    "v1/multi-image-to-3d",
+    "v1/text-to-image",
+    "v1/image-to-image",
+    "v1/remesh",
+    "v1/retexture",
+    "v1/rigging",
+    "v1/animations",
+]
+PROMPT_FIELDS = [
+    "prompt",
+    "object_prompt",
+    "style_prompt",
+    "texture_prompt",
+    "negative_prompt",
+    "text_style_prompt",
+    "art_style",
+    "ai_model",
+    "model_type",
+    "topology",
+    "target_polycount",
+    "should_remesh",
+    "should_texture",
+    "enable_pbr",
+    "texture_resolution",
+    "hd_texture",
+    "texture_image_url",
+    "image_style_url",
+]
+LICENCE_NOTE = (
+    "Made with Meshy on a paid (Pro) plan: the customer owns this output (Meshy Terms of Use 3.2); "
+    "commercial use and selling prints allowed. Don't remove Meshy's AI-identification metadata; "
+    "don't use these files to train AI models that compete with Meshy."
+)
 
 
 def api_key() -> str:
@@ -162,11 +190,23 @@ def main_prompt(task: dict) -> str:
 def save_item(task: dict, library: Path, refresh: bool) -> dict:
     """Downloads one task's files and writes record.json and PROMPT.md."""
     date = when(task.get("created_at"))[:10] or "undated"
-    folder = library / f"{date}_{task.get('type') or task['_endpoint'].split('/')[-1]}_{slug(task.get('name') or main_prompt(task))}_{task['id'][:8]}"
+    folder = (
+        library
+        / f"{date}_{task.get('type') or task['_endpoint'].split('/')[-1]}_{slug(task.get('name') or main_prompt(task))}_{task['id'][:8]}"
+    )
     record = folder / "record.json"
-    row = {"date": date, "type": task.get("type", ""), "name": task.get("name", ""), "prompt": main_prompt(task),
-           "ai_model": task.get("ai_model", ""), "status": task.get("status", ""), "task_id": task["id"],
-           "folder": folder.name, "files": "", "problems": ""}
+    row = {
+        "date": date,
+        "type": task.get("type", ""),
+        "name": task.get("name", ""),
+        "prompt": main_prompt(task),
+        "ai_model": task.get("ai_model", ""),
+        "status": task.get("status", ""),
+        "task_id": task["id"],
+        "folder": folder.name,
+        "files": "",
+        "problems": "",
+    }
     if record.exists() and not refresh:
         saved = json.loads(record.read_text())
         row["files"] = ", ".join(saved.get("_files", []))
@@ -184,19 +224,40 @@ def save_item(task: dict, library: Path, refresh: bool) -> dict:
             problems.append(f"{label}: {'expired' if exc.code in (403, 404) else exc.code}")
         except urllib.error.URLError as exc:
             problems.append(f"{label}: {exc.reason}")
-    data = strip_urls(task) | {"_files": files, "_problems": problems, "_saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                               "_licence": LICENCE_NOTE}
+    data = strip_urls(task) | {
+        "_files": files,
+        "_problems": problems,
+        "_saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "_licence": LICENCE_NOTE,
+    }
     record.write_text(json.dumps(data, indent=1, ensure_ascii=False))
-    lines = [f"# {task.get('name') or main_prompt(task)[:60] or task['id']}", "",
-             f"- Type: {task.get('type', '')} ({task['_endpoint']})", f"- Made: {when(task.get('created_at'))}",
-             f"- Status: {task.get('status', '')}; credits: {task.get('consumed_credits', '')}",
-             f"- Meshy task: {task['id']}", "", "## Prompt and settings", ""]
+    lines = [
+        f"# {task.get('name') or main_prompt(task)[:60] or task['id']}",
+        "",
+        f"- Type: {task.get('type', '')} ({task['_endpoint']})",
+        f"- Made: {when(task.get('created_at'))}",
+        f"- Status: {task.get('status', '')}; credits: {task.get('consumed_credits', '')}",
+        f"- Meshy task: {task['id']}",
+        "",
+        "## Prompt and settings",
+        "",
+    ]
     for field in PROMPT_FIELDS:
         if task.get(field) not in (None, "", [], False):
             lines.append(f"- **{field}**: {task[field]}")
     lines += ["", "## Files", ""] + [f"- {f}" for f in files] + [f"- (not saved) {p}" for p in problems]
-    lines += ["", "## Licence", "", LICENCE_NOTE, "", "## Notes for improving the prompt", "",
-              "- What came out well:", "- What to change next time:", ""]
+    lines += [
+        "",
+        "## Licence",
+        "",
+        LICENCE_NOTE,
+        "",
+        "## Notes for improving the prompt",
+        "",
+        "- What came out well:",
+        "- What to change next time:",
+        "",
+    ]
     (folder / "PROMPT.md").write_text("\n".join(lines), encoding="utf-8")
     row["files"], row["problems"] = ", ".join(files), ", ".join(problems)
     return row | {"_new": True}
@@ -210,14 +271,21 @@ def write_index(library: Path, rows: list) -> None:
         writer = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
-    md = ["# Meshy model and prompt library", "",
-          f"Updated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}. {len(rows)} items. "
-          "Each folder has the files, PROMPT.md (prompt, settings, notes) and record.json.", "",
-          "| Date | Type | Name | Prompt | Files |", "|---|---|---|---|---|"]
+    md = [
+        "# Meshy model and prompt library",
+        "",
+        f"Updated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}. {len(rows)} items. "
+        "Each folder has the files, PROMPT.md (prompt, settings, notes) and record.json.",
+        "",
+        "| Date | Type | Name | Prompt | Files |",
+        "|---|---|---|---|---|",
+    ]
     for r in rows:
         prompt = (r["prompt"] or "").replace("|", "/").replace("\n", " ")[:120]
-        md.append(f"| {r['date']} | {r['type']} | [{r['name'] or r['folder']}]({r['folder']}/PROMPT.md) | {prompt} | "
-                  f"{len(r['files'].split(', ')) if r['files'] else 0}{' (some expired)' if r['problems'] else ''} |")
+        md.append(
+            f"| {r['date']} | {r['type']} | [{r['name'] or r['folder']}]({r['folder']}/PROMPT.md) | {prompt} | "
+            f"{len(r['files'].split(', ')) if r['files'] else 0}{' (some expired)' if r['problems'] else ''} |"
+        )
     (library / "index.md").write_text("\n".join(md) + "\n", encoding="utf-8")
 
 
@@ -226,8 +294,9 @@ def copy_to(library: Path, target: str, folders: list) -> bool:
     host, path = target.split(":", 1)
     ok = True
     for name in folders + ["index.csv", "index.md"]:
-        proc = subprocess.run(["scp", "-q", "-r", str(library / name), f'{host}:"{path}/"'],
-                              capture_output=True, text=True, timeout=600)
+        proc = subprocess.run(
+            ["scp", "-q", "-r", str(library / name), f'{host}:"{path}/"'], capture_output=True, text=True, timeout=600
+        )
         if proc.returncode != 0:
             print(f"  copy failed for {name}: {proc.stderr.strip()[:200]}")
             ok = False
