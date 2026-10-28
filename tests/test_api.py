@@ -1050,3 +1050,33 @@ def test_thumbnail_rejects_oversized_file(monkeypatch, client):
         files={"file": ("uploaded.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")},
     )
     assert resp.status_code == 413
+
+
+@pytest.mark.parametrize("backend", ["openscad", "cadquery"])
+def test_generate_with_a_chosen_backend_skips_the_classifier(monkeypatch, client, backend):
+    """fleet design jobs (2026-10-28): a long structural spec was classified complex and sent to Blender."""
+    monkeypatch.setattr(main, "classify_prompt", lambda p: pytest.fail("the classifier ran"))
+    monkeypatch.setattr(main.cadquery_gen, "available", lambda: True)
+    monkeypatch.setattr(openscad_generator, "generate", _fake_openscad_generate)
+    monkeypatch.setattr(main.cadquery_gen, "generate", lambda *a, **k: _fake_openscad_generate(*a, **k))
+    resp = client.post("/generate", json={"prompt": "L-shaped deployment marker, 76.2 mm arms", "backend": backend})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["classification_method"] == "requested" and body["classification_label"] == "simple"
+
+
+def test_generate_chosen_backend_is_not_served_another_backends_cache(monkeypatch, client):
+    monkeypatch.setattr(
+        main, "classify_prompt", lambda p: ClassificationResult(Complexity.COMPLEX, 0.9, ClassificationMethod.LLM, "")
+    )
+    monkeypatch.setattr(main.blender_generator, "generate", _fake_blender_generate)
+    monkeypatch.setattr(openscad_generator, "generate", _fake_openscad_generate)
+    first = client.post("/generate", json={"prompt": "a detailed tray"}).json()
+    assert first["backend"] == "blender"
+    again = client.post("/generate", json={"prompt": "a detailed tray", "backend": "openscad"}).json()
+    assert again["backend"] == "openscad" and again["model_id"] != first["model_id"]
+
+
+def test_generate_cadquery_asked_for_but_unavailable_is_422(monkeypatch, client):
+    monkeypatch.setattr(main.cadquery_gen, "available", lambda: False)
+    assert client.post("/generate", json={"prompt": "a box", "backend": "cadquery"}).status_code == 422

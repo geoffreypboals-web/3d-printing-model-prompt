@@ -65,7 +65,7 @@ def _frame_camera(bpy, obj, margin: float = 1.15):
     from mathutils import Vector
 
     corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
-    xs, ys, zs = (c.x for c in corners), (c.y for c in corners), (c.z for c in corners)
+    xs, ys, zs = [c.x for c in corners], [c.y for c in corners], [c.z for c in corners]  # lists: min() then max()
     center = Vector(((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2, (min(zs) + max(zs)) / 2))
     radius = max((c - center).length for c in corners) or 1.0
 
