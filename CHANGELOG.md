@@ -6,6 +6,16 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ## [Unreleased]
 
+### Added (choose the backend, 2026-10-28)
+
+- `POST /generate` takes an optional `"backend"`: `openscad`, `cadquery` or
+  `blender`. It skips the classifier (`classification_method: "requested"`).
+  A long, detailed structural spec (a fleet design job's corner marker) was
+  classified complex and sent to Blender, whose script then failed; a caller
+  that knows the part is a box, tray or divider now asks for OpenSCAD. A
+  cached model from another backend isn't reused, and `cadquery` without its
+  sandbox is a 422.
+
 ### Added (miniatures bin and terrain tiles, 2026-10-19)
 
 - `gridfinity.make_minis_bin` and `POST /templates/minis-bin`: a Gridfinity

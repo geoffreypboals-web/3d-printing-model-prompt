@@ -120,6 +120,8 @@ from threedprompt.logging_config import configure_logging, get_logger
 from threedprompt.models import (
     AnalyzeResponse,
     Backend,
+    ClassificationMethod,
+    ClassificationResult,
     Complexity,
     DraftCheckRequest,
     DraftCheckResponse,
@@ -230,9 +232,15 @@ def generate(request: GenerateRequest) -> GenerateResponse:
             detail=f"prompt exceeds MAX_PROMPT_LENGTH ({settings.max_prompt_length} characters)",
         )
 
+    if request.backend is Backend.CADQUERY and not cadquery_gen.available():
+        raise HTTPException(status_code=422, detail="backend cadquery was asked for, but its sandbox can't run here")
+
     cached_model_id = storage.lookup_cached_model(prompt, request.wall_thickness_mm)
+    cached_spec = (storage.load_spec(cached_model_id) or {}) if cached_model_id else {}
+    if cached_model_id and request.backend and cached_spec.get("backend") != request.backend.value:
+        cached_model_id = None  # made by another backend: make it again with the one asked for
     if cached_model_id:
-        spec = storage.load_spec(cached_model_id) or {}
+        spec = cached_spec
         return GenerateResponse(
             model_id=cached_model_id,
             backend=Backend(spec.get("backend", Backend.OPENSCAD.value)),
@@ -243,11 +251,23 @@ def generate(request: GenerateRequest) -> GenerateResponse:
             download_url=f"/models/{cached_model_id}/download",
         )
 
-    classification = classify_prompt(prompt)
+    if request.backend:
+        classification = ClassificationResult(
+            Complexity.COMPLEX if request.backend is Backend.BLENDER else Complexity.SIMPLE,
+            1.0,
+            ClassificationMethod.REQUESTED,
+            f"The caller asked for {request.backend.value}.",
+        )
+    else:
+        classification = classify_prompt(prompt)
 
     model_id, model_directory = storage.new_model_dir()
     try:
-        if classification.label is Complexity.SIMPLE and _use_cadquery(prompt):
+        if request.backend is Backend.CADQUERY:
+            result = cadquery_gen.generate(prompt, model_directory, request.wall_thickness_mm)
+        elif request.backend is Backend.OPENSCAD:
+            result = openscad_generator.generate(prompt, model_directory, request.wall_thickness_mm)
+        elif classification.label is Complexity.SIMPLE and _use_cadquery(prompt):
             result = cadquery_gen.generate(prompt, model_directory, request.wall_thickness_mm)
         elif classification.label is Complexity.SIMPLE:
             result = openscad_generator.generate(prompt, model_directory, request.wall_thickness_mm)

@@ -35,6 +35,7 @@ class ClassificationMethod(StrEnum):
     HEURISTIC = "heuristic"
     LLM = "llm"
     LLM_FALLBACK_TO_HEURISTIC = "llm_fallback_to_heuristic"
+    REQUESTED = "requested"  # the caller chose the backend (GenerateRequest.backend); no classifier ran
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,12 @@ class GenerateRequest(BaseModel):
     prompt: str = Field(..., min_length=1, description="Natural-language description of the part to model.")
     wall_thickness_mm: float | None = Field(
         default=None, gt=0, description="Optional initial wall thickness in millimeters, if the part is a shell."
+    )
+    backend: Backend | None = Field(
+        default=None,
+        description="Optional: use this backend instead of classifying the prompt. A caller that knows the part "
+        "is structural (a box, tray or divider) asks for openscad or cadquery, so a long, detailed spec isn't "
+        "sent to Blender as 'complex'.",
     )
 
 
