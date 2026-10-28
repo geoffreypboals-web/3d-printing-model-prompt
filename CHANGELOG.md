@@ -16,6 +16,13 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
   cached model from another backend isn't reused, and `cadquery` without its
   sandbox is a 422.
 
+### Fixed (thumbnails, 2026-10-28)
+
+- `POST /thumbnail` failed on every model ("max() iterable argument is
+  empty"): render_thumbnail.py read its x/y/z generators twice (min, then
+  max). They're lists now. Checked with Blender 4.3.2 in the running
+  container on a fleet design job's OpenSCAD STL.
+
 ### Added (miniatures bin and terrain tiles, 2026-10-19)
 
 - `gridfinity.make_minis_bin` and `POST /templates/minis-bin`: a Gridfinity
