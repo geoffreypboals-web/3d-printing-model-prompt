@@ -82,6 +82,12 @@ class GenerateRequest(BaseModel):
         "is structural (a box, tray or divider) asks for openscad or cadquery, so a long, detailed spec isn't "
         "sent to Blender as 'complex'.",
     )
+    use_templates: bool = Field(
+        default=True,
+        description="False: never use a built-in keyword template (box, plate, bracket...); the LLM writes the "
+        "model from the whole prompt, and a cached model isn't reused. For detailed specs, which mention words "
+        "like 'base plate' without being a plain plate.",
+    )
 
 
 class GenerateResponse(BaseModel):

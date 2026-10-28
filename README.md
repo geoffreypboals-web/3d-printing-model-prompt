@@ -616,7 +616,7 @@ Generator interview, so answers can be spoken instead of typed.
 | Method | Path                          | Description                                                          |
 |--------|-------------------------------|------------------------------------------------------------------------|
 | GET    | `/health`                     | Reports OpenSCAD/Blender/FreeCAD/LLM availability                       |
-| POST   | `/generate`                   | `{"prompt": "...", "wall_thickness_mm": 3.0, "backend": "openscad"}` (backend optional: skips the classifier) -> JSON w/ model_id |
+| POST   | `/generate`                   | `{"prompt": "...", "wall_thickness_mm": 3.0, "backend": "openscad", "use_templates": false}` (backend optional: skips the classifier; use_templates false: no keyword template, no cache) -> JSON w/ model_id |
 | GET    | `/models/{model_id}/download` | Download the STL                                                        |
 | POST   | `/models/{model_id}/thicken`  | `{"amount_mm": 1.5}` -> JSON w/ new model_id (see above)                 |
 | POST   | `/thicken`                    | multipart upload (`file` .stl/.obj/.3dm, `amount_mm`, optional `quad_target_faces`) -> **the thickened STL file** |
