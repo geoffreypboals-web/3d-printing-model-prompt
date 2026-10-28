@@ -210,9 +210,9 @@ def health() -> HealthResponse:
     )
 
 
-def _use_cadquery(prompt: str) -> bool:
+def _use_cadquery(prompt: str, use_templates: bool = True) -> bool:
     """CadQuery writes simple parts no OpenSCAD template covers, when configured and the sandbox can run here."""
-    if settings.simple_llm_backend != "cadquery" or openscad_generator.has_template(prompt):
+    if settings.simple_llm_backend != "cadquery" or (use_templates and openscad_generator.has_template(prompt)):
         return False
     if not cadquery_gen.available():
         logger.warning("SIMPLE_LLM_BACKEND=cadquery but the sandbox can't run here; using OpenSCAD.")
@@ -235,7 +235,7 @@ def generate(request: GenerateRequest) -> GenerateResponse:
     if request.backend is Backend.CADQUERY and not cadquery_gen.available():
         raise HTTPException(status_code=422, detail="backend cadquery was asked for, but its sandbox can't run here")
 
-    cached_model_id = storage.lookup_cached_model(prompt, request.wall_thickness_mm)
+    cached_model_id = storage.lookup_cached_model(prompt, request.wall_thickness_mm) if request.use_templates else None
     cached_spec = (storage.load_spec(cached_model_id) or {}) if cached_model_id else {}
     if cached_model_id and request.backend and cached_spec.get("backend") != request.backend.value:
         cached_model_id = None  # made by another backend: make it again with the one asked for
@@ -261,16 +261,17 @@ def generate(request: GenerateRequest) -> GenerateResponse:
     else:
         classification = classify_prompt(prompt)
 
+    no_templates = {} if request.use_templates else {"use_templates": False}  # only passed when it's off
     model_id, model_directory = storage.new_model_dir()
     try:
         if request.backend is Backend.CADQUERY:
             result = cadquery_gen.generate(prompt, model_directory, request.wall_thickness_mm)
         elif request.backend is Backend.OPENSCAD:
-            result = openscad_generator.generate(prompt, model_directory, request.wall_thickness_mm)
-        elif classification.label is Complexity.SIMPLE and _use_cadquery(prompt):
+            result = openscad_generator.generate(prompt, model_directory, request.wall_thickness_mm, **no_templates)
+        elif classification.label is Complexity.SIMPLE and _use_cadquery(prompt, request.use_templates):
             result = cadquery_gen.generate(prompt, model_directory, request.wall_thickness_mm)
         elif classification.label is Complexity.SIMPLE:
-            result = openscad_generator.generate(prompt, model_directory, request.wall_thickness_mm)
+            result = openscad_generator.generate(prompt, model_directory, request.wall_thickness_mm, **no_templates)
         else:
             result = blender_generator.generate(prompt, model_directory)
     except (OpenScadGenerationError, BlenderGenerationError, CadQueryGenerationError, LLMError) as exc:

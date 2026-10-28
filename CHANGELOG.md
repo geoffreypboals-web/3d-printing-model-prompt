@@ -6,6 +6,14 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ## [Unreleased]
 
+### Added (no keyword templates, 2026-10-28)
+
+- `POST /generate` takes `"use_templates": false`: the LLM writes the model
+  from the whole prompt instead of a built-in keyword template, and no cached
+  model is reused. fleet-tasks' design jobs send detailed specs that mention
+  a "base plate" or a "case"; 12 of 16 were built as the stock plate (60 mm
+  wide, 3 mm thick) or box (40 × 20 mm) with only the first size taken.
+
 ### Added (choose the backend, 2026-10-28)
 
 - `POST /generate` takes an optional `"backend"`: `openscad`, `cadquery` or

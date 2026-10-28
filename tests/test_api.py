@@ -54,7 +54,7 @@ def client():
     return TestClient(main.app)
 
 
-def _fake_openscad_generate(prompt, output_dir, wall_thickness_mm=None, llm_client=None):
+def _fake_openscad_generate(prompt, output_dir, wall_thickness_mm=None, llm_client=None, use_templates=True):
     output_dir.mkdir(parents=True, exist_ok=True)
     stl_path = output_dir / "model.stl"
     scad_path = output_dir / "model.scad"
@@ -1080,3 +1080,17 @@ def test_generate_chosen_backend_is_not_served_another_backends_cache(monkeypatc
 def test_generate_cadquery_asked_for_but_unavailable_is_422(monkeypatch, client):
     monkeypatch.setattr(main.cadquery_gen, "available", lambda: False)
     assert client.post("/generate", json={"prompt": "a box", "backend": "cadquery"}).status_code == 422
+
+
+def test_generate_without_templates_skips_the_cache_and_passes_it_on(monkeypatch, client):
+    seen = []
+
+    def fake(prompt, output_dir, wall_thickness_mm=None, llm_client=None, use_templates=True):
+        seen.append(use_templates)
+        return _fake_openscad_generate(prompt, output_dir, wall_thickness_mm)
+
+    monkeypatch.setattr(openscad_generator, "generate", fake)
+    body = {"prompt": "tray with a base plate, 210 x 150 x 25 mm", "backend": "openscad"}
+    first = client.post("/generate", json=body).json()
+    again = client.post("/generate", json=dict(body, use_templates=False)).json()
+    assert seen == [True, False] and again["model_id"] != first["model_id"]

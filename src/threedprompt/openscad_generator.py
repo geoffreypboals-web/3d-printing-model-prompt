@@ -243,11 +243,14 @@ def generate(
     output_dir: Path,
     wall_thickness_mm: float | None = None,
     llm_client: LLMClient | None = None,
+    use_templates: bool = True,
 ) -> GenerationResult:
     """
     Generate a simple/parametric part via OpenSCAD.
 
-    Tries a deterministic built-in template first (no LLM call, no cost);
+    Tries a deterministic built-in template first (no LLM call, no cost),
+    unless use_templates is False (a detailed spec that merely mentions a
+    "base plate" must not become the stock plate);
     falls back to LLM-authored OpenSCAD source for anything unrecognized,
     retrying once with the compiler error fed back in if the first
     attempt fails to render.
@@ -256,7 +259,7 @@ def generate(
     scad_path = output_dir / "model.scad"
     stl_path = output_dir / "model.stl"
 
-    template = _detect_template(prompt)
+    template = _detect_template(prompt) if use_templates else None
     if template is not None:
         scad_source = _render_template(template, prompt, wall_thickness_mm)
         scad_path.write_text(scad_source)

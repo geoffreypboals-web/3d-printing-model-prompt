@@ -53,6 +53,19 @@ def test_golden_path_bracket_uses_template_no_llm_call(monkeypatch, tmp_path, fa
     assert llm.calls == []
 
 
+def test_no_templates_sends_a_detailed_spec_to_the_llm(monkeypatch, tmp_path, fake_llm_client):
+    """fleet design jobs (2026-10-28): specs mentioning a 'base plate' became the stock 60 mm plate."""
+    monkeypatch.setattr(openscad_generator.shutil, "which", _fake_which)
+    monkeypatch.setattr(openscad_generator.subprocess, "run", _make_fake_run(succeed=True))
+
+    llm = fake_llm_client(responses=["wall_thickness = 2;\ncube([210, 150, 25]);"])
+    spec = "Magnetic tray frame, 210 x 150 x 25 mm. Base plate 2 mm thick with a 6x2 mm magnet grid."
+    result = generate(spec, tmp_path, llm_client=llm, use_templates=False)
+
+    assert len(llm.calls) == 1
+    assert "cube([210, 150, 25])" in Path(result.source_path).read_text()
+
+
 def test_unrecognized_prompt_falls_back_to_llm_authored_scad(monkeypatch, tmp_path, fake_llm_client):
     monkeypatch.setattr(openscad_generator.shutil, "which", _fake_which)
     monkeypatch.setattr(openscad_generator.subprocess, "run", _make_fake_run(succeed=True))
