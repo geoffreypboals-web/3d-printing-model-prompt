@@ -95,6 +95,9 @@ def available() -> bool:
 
 def run_sandboxed(code_path: Path, output_dir: Path) -> Path:
     """Run part code in runner.py's sandbox; return model.stl or raise with the child's stderr."""
+    # absolute: the child runs with cwd=output_dir, so a relative output/<id>/part.py
+    # (main.py's paths) became output/<id>/output/<id>/part.py and every build failed
+    code_path, output_dir = Path(code_path).resolve(), Path(output_dir).resolve()
     stl_path = output_dir / "model.stl"
     stl_path.unlink(missing_ok=True)
     timeout = settings.cad_subprocess_timeout_seconds

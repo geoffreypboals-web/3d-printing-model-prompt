@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib.util
 import shutil
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -263,3 +264,21 @@ def test_sandbox_can_still_read_its_own_proc_and_output(tmp_path):
     code += "open('/proc/self/status').read()\nresult = cq.Workplane().box(5, 5, 5)\n"
     _, err = _run(tmp_path, code)
     assert err is None
+
+
+def test_relative_paths_reach_the_child_absolute(tmp_path, monkeypatch):
+    """main.py passes output/<id>/part.py; the child's cwd is that folder, so a relative
+    path doubled up (output/<id>/output/<id>/part.py) and every Docker build failed."""
+    monkeypatch.chdir(tmp_path)
+    out = Path("output/abc")
+    out.mkdir(parents=True)
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"], seen["cwd"] = cmd, kw["cwd"]
+        (tmp_path / out / "model.stl").write_text("solid x")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(cadquery_gen.subprocess, "run", fake_run)
+    run_sandboxed(out / "part.py", out)
+    assert seen["cmd"][3] == str(tmp_path / out / "part.py") and seen["cmd"][4] == str(tmp_path / out)

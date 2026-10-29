@@ -58,7 +58,10 @@ class OllamaClient(LLMClient):
         self._timeout = timeout_seconds
 
     def generate(self, prompt: str, system: str | None = None) -> str:
-        payload = {"model": self._model, "prompt": prompt, "stream": False}
+        # think False: thinking models (qwen3.x) otherwise reason at length before
+        # answering, which made builds take 6-10 min and hit the read timeout.
+        # Models without a thinking mode accept it and ignore it.
+        payload = {"model": self._model, "prompt": prompt, "stream": False, "think": False}
         if system:
             payload["system"] = system
         try:
