@@ -1094,3 +1094,20 @@ def test_generate_without_templates_skips_the_cache_and_passes_it_on(monkeypatch
     first = client.post("/generate", json=body).json()
     again = client.post("/generate", json=dict(body, use_templates=False)).json()
     assert seen == [True, False] and again["model_id"] != first["model_id"]
+
+
+def test_thumbnail_view_is_passed_on_and_checked(monkeypatch, client):
+    seen = []
+
+    def fake_render(input_path, output_path, *, size=thumbnail.DEFAULT_SIZE_PX, view="iso"):
+        seen.append(view)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"\x89PNG\r\n\x1a\nfakepng")
+        return output_path
+
+    monkeypatch.setattr(thumbnail, "render_mesh_thumbnail", fake_render)
+    files = {"file": ("part.stl", b"solid fake\nendsolid fake\n", "application/octet-stream")}
+    assert client.post("/thumbnail", files=files, data={"view": "bottom"}).status_code == 200
+    assert client.post("/thumbnail", files=files).status_code == 200
+    assert seen == ["bottom", "iso"]
+    assert client.post("/thumbnail", files=files, data={"view": "sideways"}).status_code == 422

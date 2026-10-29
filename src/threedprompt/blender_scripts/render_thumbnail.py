@@ -16,6 +16,7 @@ Inputs: CLI args after a literal `--`:
     --input <path>   mesh file: .stl/.obj/.ply/.glb/.gltf/.fbx/.3dm
     --output <path>  where to write the PNG
     --size <int>     square render resolution in pixels
+    --view <name>    iso (default), top, bottom or front
 Outputs: A PNG file at --output (transparent background, RGBA). On
     failure, prints the error to stderr and exits non-zero -- no PNG is
     left behind, which is what thumbnail.py's caller checks for (Blender's
@@ -51,10 +52,16 @@ def _parse_args():
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--size", type=int, default=512)
+    parser.add_argument("--view", choices=sorted(VIEWS), default="iso")
     return parser.parse_args(argv)
 
 
-def _frame_camera(bpy, obj, margin: float = 1.15):
+# Where the camera looks from (towards the model's center). iso is the original three-quarter view;
+# top/bottom/front let a caller see faces the iso view hides (magnet pockets under a part).
+VIEWS = {"iso": (1.0, -1.0, 0.7), "top": (0.0, -0.001, 1.0), "bottom": (0.0, -0.001, -1.0), "front": (0.0, -1.0, 0.0)}
+
+
+def _frame_camera(bpy, obj, margin: float = 1.15, view: str = "iso"):
     """
     Add an orthographic camera angled isometrically, sized to fit obj's
     world-space bounding box with a small margin, and point it at the
@@ -69,7 +76,7 @@ def _frame_camera(bpy, obj, margin: float = 1.15):
     center = Vector(((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2, (min(zs) + max(zs)) / 2))
     radius = max((c - center).length for c in corners) or 1.0
 
-    direction = Vector((1.0, -1.0, 0.7)).normalized()
+    direction = Vector(VIEWS[view]).normalized()
     camera_data = bpy.data.cameras.new("ThumbnailCamera")
     camera_data.type = "ORTHO"
     camera_data.ortho_scale = radius * 2.0 * margin
@@ -108,7 +115,7 @@ def main() -> None:
         obj.select_set(True)
         bpy.ops.object.shade_smooth()
 
-        _frame_camera(bpy, obj)
+        _frame_camera(bpy, obj, view=args.view)
         _configure_workbench_render(bpy, max(16, args.size))
 
         bpy.context.scene.render.filepath = args.output

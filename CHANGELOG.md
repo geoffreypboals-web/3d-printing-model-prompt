@@ -6,6 +6,13 @@ follows [Keep a Changelog](https://keepachangelog.com/), versioning follows
 
 ## [Unreleased]
 
+### Added (thumbnail views, 2026-10-28)
+
+- `POST /thumbnail` takes `view`: `iso` (default, unchanged), `top`,
+  `bottom` or `front`. fleet-tasks' design shape check looks at faces the
+  three-quarter view hides, such as magnet pockets under a part. Checked with
+  Blender 4.3.2 in the running container.
+
 ### Added (no keyword templates, 2026-10-28)
 
 - `POST /generate` takes `"use_templates": false`: the LLM writes the model
