@@ -78,9 +78,15 @@ def _blender_binary_path() -> str:
     return resolved
 
 
-def render_mesh_thumbnail(input_path: Path, output_path: Path, *, size: int = DEFAULT_SIZE_PX) -> Path:
+VIEWS = ("iso", "top", "bottom", "front")
+
+
+def render_mesh_thumbnail(
+    input_path: Path, output_path: Path, *, size: int = DEFAULT_SIZE_PX, view: str = "iso"
+) -> Path:
     """
-    Render a square PNG thumbnail of input_path to output_path.
+    Render a square PNG thumbnail of input_path to output_path, seen from
+    `view` (iso: the three-quarter view; top, bottom, front: straight on).
 
     size is clamped to [MIN_SIZE_PX, settings.thumbnail_max_size_px] as a
     defense-in-depth backstop -- main.py's /thumbnail endpoint is expected
@@ -97,6 +103,8 @@ def render_mesh_thumbnail(input_path: Path, output_path: Path, *, size: int = DE
             f"unsupported format for thumbnail rendering: {suffix!r}; supported: {sorted(SUPPORTED_EXTENSIONS)}"
         )
     size = max(MIN_SIZE_PX, min(size, settings.thumbnail_max_size_px))
+    if view not in VIEWS:
+        raise ThumbnailError(f"unknown view {view!r}; one of {list(VIEWS)}")
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -123,6 +131,8 @@ def render_mesh_thumbnail(input_path: Path, output_path: Path, *, size: int = DE
                 str(output_path),
                 "--size",
                 str(size),
+                "--view",
+                view,
             ],
             capture_output=True,
             text=True,

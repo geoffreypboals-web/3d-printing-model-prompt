@@ -150,3 +150,22 @@ def test_render_mesh_thumbnail_step_conversion_failure_raises_thumbnailerror(mon
 
     with pytest.raises(ThumbnailError, match="Null input shape"):
         render_mesh_thumbnail(input_step, tmp_path / "out" / "thumbnail.png")
+
+
+def test_render_mesh_thumbnail_passes_the_view_to_blender(monkeypatch, tmp_path):
+    monkeypatch.setattr(thumbnail.shutil, "which", _fake_which_blender)
+    seen = []
+
+    def _fake_run(cmd, capture_output, text, timeout):
+        seen.append(cmd[cmd.index("--view") + 1])
+        Path(cmd[cmd.index("--output") + 1]).write_bytes(b"\x89PNG\r\n\x1a\nfakepng")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(thumbnail.subprocess, "run", _fake_run)
+    stl = tmp_path / "model.stl"
+    stl.write_bytes(b"solid fake\nendsolid fake\n")
+    render_mesh_thumbnail(stl, tmp_path / "a.png", view="bottom")
+    render_mesh_thumbnail(stl, tmp_path / "b.png")
+    assert seen == ["bottom", "iso"]
+    with pytest.raises(thumbnail.ThumbnailError, match="unknown view"):
+        render_mesh_thumbnail(stl, tmp_path / "c.png", view="sideways")

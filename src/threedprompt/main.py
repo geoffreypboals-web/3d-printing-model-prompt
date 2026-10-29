@@ -915,17 +915,23 @@ def repair_model_solid(model_id: str) -> RepairSolidResponse:
 
 
 _THUMBNAIL_SIZE_FORM = Form(thumbnail.DEFAULT_SIZE_PX, ge=thumbnail.MIN_SIZE_PX)
+_THUMBNAIL_VIEW_FORM = Form("iso")
 
 
 @app.post("/thumbnail")
-async def render_thumbnail(file: UploadFile = _UPLOAD_FILE, size: int = _THUMBNAIL_SIZE_FORM) -> FileResponse:
+async def render_thumbnail(
+    file: UploadFile = _UPLOAD_FILE, size: int = _THUMBNAIL_SIZE_FORM, view: str = _THUMBNAIL_VIEW_FORM
+) -> FileResponse:
     """
     Render a PNG thumbnail of an uploaded mesh or STEP file via headless
     Blender (STEP first converted to a mesh via FreeCAD), returning the
     image directly - one round trip, mirroring /thicken's shape. Intended
     for a caller like the farm-manager sibling repo's library scanner,
-    which has no CAD tooling of its own.
+    which has no CAD tooling of its own. `view` (iso, top, bottom, front)
+    picks the camera, so a checker can see faces the iso view hides.
     """
+    if view not in thumbnail.VIEWS:
+        raise HTTPException(status_code=422, detail=f"view must be one of {list(thumbnail.VIEWS)}")
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in thumbnail.SUPPORTED_EXTENSIONS:
         raise HTTPException(
@@ -943,7 +949,8 @@ async def render_thumbnail(file: UploadFile = _UPLOAD_FILE, size: int = _THUMBNA
     upload_model_id, upload_path = storage.save_upload(file.filename or "model.stl", content)
     try:
         png_path = storage.model_dir(upload_model_id) / "thumbnail.png"
-        thumbnail.render_mesh_thumbnail(upload_path, png_path, size=size)
+        extra = {} if view == "iso" else {"view": view}  # only passed when it isn't the default
+        thumbnail.render_mesh_thumbnail(upload_path, png_path, size=size, **extra)
     except thumbnail.ThumbnailError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return FileResponse(png_path, media_type="image/png", filename=f"{upload_model_id}.png")
