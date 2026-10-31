@@ -101,3 +101,24 @@ def test_missing_binary_on_llm_path_raises_without_calling_llm(monkeypatch, tmp_
     with pytest.raises(OpenScadGenerationError, match="not found on PATH"):
         generate("a weird little part", tmp_path, llm_client=llm)
     assert llm.calls == []
+
+
+def test_llm_is_told_how_to_cut_so_pockets_open_and_cutters_never_add():
+    """2026-10-31: a tray's wells were cut exactly to the top face (sealed under a zero-thickness
+    skin), a rim's inner cutout sat inside union(), and a plinth's ribs were cut away with the
+    cavity they stand in; the system prompt now rules all three out."""
+    calls = []
+
+    class LLM:
+        def generate(self, prompt, system=None):
+            calls.append(system)
+            return "cube([1, 1, 1]);"
+
+    openscad_generator._llm_generate_scad("a tray", LLM())
+    system = calls[0]
+    assert "Build the part as a difference()" in system
+    assert "added after that cut" in system  # ribs inside a cavity survive it
+    assert "Never put a cutter inside the union()" in system
+    assert "0.5 mm past that face" in system
+    assert "Two cutters that meet" in system  # no skin between wells and a recess
+    assert "one connected piece" in system
