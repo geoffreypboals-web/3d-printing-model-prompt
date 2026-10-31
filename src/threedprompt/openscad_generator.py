@@ -181,7 +181,24 @@ _LLM_SYSTEM_PROMPT = (
     f"If the part has a wall or material thickness, declare it as a variable "
     f"named exactly `{WALL_THICKNESS_VAR}` near the top of the file and use "
     "that variable everywhere the thickness applies, so it can be tuned "
-    "later. Respond with ONLY the .scad source code, no markdown fences, no "
+    "later. "
+    # The rules below came from parts that compiled but were wrong (2026-10-31, fleet design
+    # jobs): wells cut exactly to the top face stayed sealed under a zero-thickness skin, and a
+    # rim's "inner cutout" written inside union() added material instead of removing it.
+    "Build the part as a difference(): first a union() of every solid that "
+    "adds material, then every cutter (holes, pockets, slots, recesses, "
+    "wells, grooves, the hollow of a box or rim). Never put a cutter inside "
+    "the union() or anywhere it is added. Features that stand inside a "
+    "cut-out space (ribs on a cavity's inner walls, pins in a pocket) are "
+    "added after that cut: union() them onto the difference() result, or "
+    "the cut removes them. A cutter that opens "
+    "through a face must extend 0.5 mm past that face (a pocket open to the "
+    "top starts below its floor and ends 0.5 mm above the top; a through "
+    "hole sticks out 0.5 mm at both ends), so no zero-thickness skin is left; "
+    "a blind pocket stops at its stated depth. Two cutters that meet (wells "
+    "down into a recess) overlap by 0.5 mm for the same reason. Every solid must touch the "
+    "rest: one connected piece. Use the given sizes and positions exactly. "
+    "Respond with ONLY the .scad source code, no markdown fences, no "
     "explanation."
 )
 
