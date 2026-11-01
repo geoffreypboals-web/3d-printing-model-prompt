@@ -82,6 +82,13 @@ class GenerateRequest(BaseModel):
         "is structural (a box, tray or divider) asks for openscad or cadquery, so a long, detailed spec isn't "
         "sent to Blender as 'complex'.",
     )
+    scad: str | None = Field(
+        default=None,
+        max_length=60000,
+        description="Optional OpenSCAD source written by the caller (e.g. a frontier model that wrote the "
+        "spec): rendered as given, with no LLM call and no cache. It may not include, use or import files. A "
+        "compile error is a 422 with OpenSCAD's message, so the caller can have the code fixed.",
+    )
     use_templates: bool = Field(
         default=True,
         description="False: never use a built-in keyword template (box, plate, bracket...); the LLM writes the "

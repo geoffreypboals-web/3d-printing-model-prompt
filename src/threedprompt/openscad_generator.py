@@ -255,6 +255,30 @@ def render_scad_to_stl(scad_path: Path, stl_path: Path) -> None:
         )
 
 
+_FILE_ACCESS = re.compile(r"\b(include|use)\s*<|\b(import|surface)\s*\(")
+
+
+def render_given(scad_source: str, output_dir: Path) -> GenerationResult:
+    """Render OpenSCAD source the caller wrote (no LLM call). It may not read files: include/use
+    or import()/surface() would pull files from this machine into the model. Raises
+    OpenScadGenerationError on a refused or failed source."""
+    if _FILE_ACCESS.search(scad_source):
+        raise OpenScadGenerationError("the given OpenSCAD reads files (include, use, import or surface); refused")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    scad_path = output_dir / "model.scad"
+    stl_path = output_dir / "model.stl"
+    scad_path.write_text(scad_source)
+    render_scad_to_stl(scad_path, stl_path)
+    logger.info("Rendered %s from caller-written OpenSCAD (no LLM call).", stl_path)
+    return GenerationResult(
+        backend=Backend.OPENSCAD,
+        stl_path=str(stl_path),
+        source_path=str(scad_path),
+        source_kind="openscad_scad",
+        wall_thickness_param=WALL_THICKNESS_VAR if WALL_THICKNESS_VAR in scad_source else None,
+    )
+
+
 def generate(
     prompt: str,
     output_dir: Path,

@@ -17,6 +17,8 @@ Troubleshooting:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -1111,3 +1113,31 @@ def test_thumbnail_view_is_passed_on_and_checked(monkeypatch, client):
     assert client.post("/thumbnail", files=files).status_code == 200
     assert seen == ["bottom", "iso"]
     assert client.post("/thumbnail", files=files, data={"view": "sideways"}).status_code == 422
+
+
+def test_generate_with_given_scad_renders_it_without_an_llm(monkeypatch, client):
+    """Fleet design jobs (2026-10-31): Gemini writes the OpenSCAD with the spec; the tool renders
+    it as given. A compile error is the caller's to fix (422), not 'tool down' (503)."""
+    rendered = []
+
+    def fake_render(scad_path, stl_path):
+        rendered.append(scad_path.read_text())
+        if "BROKEN" in rendered[-1]:
+            raise openscad_generator.OpenScadGenerationError("Parser error: syntax error in line 1")
+        stl_path.write_text("solid x\nendsolid x\n")
+
+    monkeypatch.setattr(openscad_generator, "render_scad_to_stl", fake_render)
+    monkeypatch.setattr(openscad_generator, "generate", lambda *a, **k: pytest.fail("no LLM path"))
+    body = {"prompt": "a tray", "backend": "openscad", "scad": "difference() { cube([10, 10, 5]); }"}
+    first = client.post("/generate", json=body)
+    assert first.status_code == 200 and rendered == [body["scad"]]
+    again = client.post("/generate", json=body).json()  # never served from the cache
+    assert again["model_id"] != first.json()["model_id"] and len(rendered) == 2
+    bad = client.post("/generate", json=dict(body, scad="BROKEN"))
+    assert bad.status_code == 422 and "syntax error" in bad.json()["detail"]
+    reads = client.post("/generate", json=dict(body, scad="include <secrets.scad>\ncube(1);"))
+    assert reads.status_code == 422 and "reads files" in reads.json()["detail"]
+    for leak in ('import("/etc/passwd");', 'surface(file="/etc/hosts");', "use <x.scad>"):
+        with pytest.raises(openscad_generator.OpenScadGenerationError):
+            openscad_generator.render_given(leak, Path("/nonexistent"))
+    assert client.post("/generate", json=dict(body, backend="blender")).status_code == 422

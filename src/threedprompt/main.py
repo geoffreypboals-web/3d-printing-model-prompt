@@ -235,6 +235,40 @@ def generate(request: GenerateRequest) -> GenerateResponse:
     if request.backend is Backend.CADQUERY and not cadquery_gen.available():
         raise HTTPException(status_code=422, detail="backend cadquery was asked for, but its sandbox can't run here")
 
+    if request.scad is not None and request.backend not in (None, Backend.OPENSCAD):
+        raise HTTPException(status_code=422, detail="scad (OpenSCAD source) only goes with backend openscad")
+    if request.scad is not None:
+        model_id, model_directory = storage.new_model_dir()
+        try:
+            result = openscad_generator.render_given(request.scad, model_directory)
+        except OpenScadGenerationError as exc:  # the caller's code: 422 (theirs to fix), not 503 (we're down)
+            shutil.rmtree(model_directory, ignore_errors=True)
+            raise HTTPException(status_code=422, detail=f"the given OpenSCAD didn't render: {exc}") from exc
+        storage.save_spec(
+            model_id,
+            {
+                "prompt": prompt,
+                "wall_thickness_mm": request.wall_thickness_mm,
+                "backend": result.backend.value,
+                "source_path": result.source_path,
+                "source_kind": result.source_kind,
+                "wall_thickness_param": result.wall_thickness_param,
+                "classification_label": Complexity.SIMPLE.value,
+                "classification_confidence": 1.0,
+                "classification_method": ClassificationMethod.REQUESTED.value,
+                "classification_reasoning": "The caller gave the OpenSCAD source.",
+            },
+        )
+        return GenerateResponse(
+            model_id=model_id,
+            backend=result.backend,
+            classification_label=Complexity.SIMPLE,
+            classification_confidence=1.0,
+            classification_method=ClassificationMethod.REQUESTED,
+            classification_reasoning="The caller gave the OpenSCAD source.",
+            download_url=f"/models/{model_id}/download",
+        )
+
     cached_model_id = storage.lookup_cached_model(prompt, request.wall_thickness_mm) if request.use_templates else None
     cached_spec = (storage.load_spec(cached_model_id) or {}) if cached_model_id else {}
     if cached_model_id and request.backend and cached_spec.get("backend") != request.backend.value:
